@@ -504,6 +504,13 @@ app.get('*', (req, res) => {
   res.sendFile('index.html', { root: __dirname });
 });
 
-app.listen(PORT, HOST, () => {
-  console.log(`Pdf Bapu running at http://${HOST}:${PORT}`);
-});
+// Vercel runs this Express app as a serverless function.
+// Export the app so Vercel can manage the function lifecycle.
+// Keep the local listener only for normal Node.js development.
+export default app;
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, HOST, () => {
+    console.log(`Pdf Bapu running at http://${HOST}:${PORT}`);
+  });
+}
