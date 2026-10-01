@@ -702,6 +702,7 @@ function sampleBackground(ctx, x, y, width, height) {
 }
 
 // Sample the EXACT text color from canvas glyph pixels
+// Sample the EXACT text color from canvas glyph pixels with core contrast isolation
 function getExactTextColorFromCanvas(ctx, x, y, width, height, bgColorHex) {
   try {
     const sx = Math.max(0, Math.min(ctx.canvas.width - 1, Math.round(x)));
@@ -717,24 +718,30 @@ function getExactTextColorFromCanvas(ctx, x, y, width, height, bgColorHex) {
     const bgLuma = (bgR * 299 + bgG * 587 + bgB * 114) / 1000;
 
     const data = ctx.getImageData(sx, sy, sw, sh).data;
+    const candidates = [];
 
-    let count = 0;
-    let sumR = 0, sumG = 0, sumB = 0;
-
+    // Dense sampling step of 4 for maximum color fidelity
     for (let i = 0; i < data.length; i += 16) {
       if (data[i + 3] < 120) continue;
       const r = data[i], g = data[i + 1], b = data[i + 2];
       const diff = Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB);
-      if (diff > 50) {
-        sumR += r;
-        sumG += g;
-        sumB += b;
-        count++;
+      if (diff > 45) {
+        candidates.push({ r, g, b, diff });
       }
     }
 
-    if (count > 0) {
-      return rgbToHex(Math.round(sumR / count), Math.round(sumG / count), Math.round(sumB / count));
+    if (candidates.length > 0) {
+      // Sort by highest contrast to background to capture pure core stroke pixels
+      // (discarding washed-out anti-aliasing edge blend)
+      candidates.sort((a, b) => b.diff - a.diff);
+      const topCount = Math.max(1, Math.min(candidates.length, Math.ceil(candidates.length * 0.35)));
+      let sumR = 0, sumG = 0, sumB = 0;
+      for (let j = 0; j < topCount; j++) {
+        sumR += candidates[j].r;
+        sumG += candidates[j].g;
+        sumB += candidates[j].b;
+      }
+      return rgbToHex(Math.round(sumR / topCount), Math.round(sumG / topCount), Math.round(sumB / topCount));
     }
 
     return bgLuma < 70 ? '#ffffff' : '#000000';
@@ -758,13 +765,13 @@ function extractPdfTextItems(textContent, viewport, ptViewport, ctx, pageNum) {
     const fontHeightPt = Math.hypot(item.transform[2], item.transform[3]) || item.height || 12;
     const [vx, vy] = viewport.convertToViewportPoint(tx, ty);
 
-    const fontSizePx = Math.max(12, Math.round(fontHeightPt * viewport.scale));
-    const widthPx = Math.max(10, Math.round(item.width * viewport.scale));
+    const fontSizePx = Math.max(10, Math.round(fontHeightPt * viewport.scale));
+    const widthPx = Math.max(8, Math.round(item.width * viewport.scale));
 
     // Tight typographical bounding box:
     // vy is baseline: ascender is 82% above baseline, descender is 22% below baseline
     const topY = Math.max(0, Math.round(vy - (fontSizePx * 0.82)));
-    const bottomY = Math.max(topY + 10, Math.round(vy + (fontSizePx * 0.22)));
+    const bottomY = Math.max(topY + 8, Math.round(vy + (fontSizePx * 0.22)));
     const heightPx = bottomY - topY;
     const xPx = Math.max(0, Math.round(vx));
 
@@ -775,15 +782,27 @@ function extractPdfTextItems(textContent, viewport, ptViewport, ctx, pageNum) {
     let fontFamily = 'Arial, sans-serif';
     let pdfFontType = 'Helvetica';
 
-    if (fontLower.includes('times') || fontLower.includes('serif') || fontLower.includes('georgia') || fontLower.includes('minion')) {
+    if (
+      fontLower.includes('times') || fontLower.includes('serif') || fontLower.includes('georgia') ||
+      fontLower.includes('minion') || fontLower.includes('cambria') || fontLower.includes('garamond') ||
+      fontLower.includes('palatino') || fontLower.includes('century')
+    ) {
       fontFamily = "'Times New Roman', Georgia, serif";
       pdfFontType = 'TimesRoman';
-    } else if (fontLower.includes('courier') || fontLower.includes('mono') || fontLower.includes('consolas')) {
+    } else if (
+      fontLower.includes('courier') || fontLower.includes('mono') || fontLower.includes('consolas') ||
+      fontLower.includes('menlo')
+    ) {
       fontFamily = "'Courier New', monospace";
       pdfFontType = 'Courier';
+    } else if (fontLower.includes('trebuchet')) {
+      fontFamily = "'Trebuchet MS', sans-serif";
+      pdfFontType = 'Helvetica';
     }
 
-    const bold = fontLower.includes('bold') || fontLower.includes('black') || fontLower.includes('heavy') || fontLower.includes('700') || fontLower.includes('800');
+    const bold = fontLower.includes('bold') || fontLower.includes('black') || fontLower.includes('heavy') ||
+                 fontLower.includes('700') || fontLower.includes('800') ||
+                 isInkBoxBold(ctx, xPx, topY, widthPx, heightPx, bgColor);
     const italic = fontLower.includes('italic') || fontLower.includes('oblique');
 
     rawItems.push({
@@ -837,7 +856,10 @@ function extractPdfTextItems(textContent, viewport, ptViewport, ctx, pageNum) {
       current.width = Math.max(current.width, (item.x + item.width) - current.x);
       current.height = Math.max(current.height, item.height);
       current.fontSize = Math.max(current.fontSize, item.fontSize);
+      current.pdfFontSize = Math.max(current.pdfFontSize || 0, item.pdfFontSize || 0);
       current.pdfWidth = Math.max(current.pdfWidth, (item.pdfX + item.pdfWidth) - current.pdfX);
+      if (item.bold) current.bold = true;
+      if (item.italic) current.italic = true;
     } else {
       merged.push(current);
       current = { ...item };
@@ -1205,25 +1227,37 @@ function updateZoomLabel() {
   if (label) label.textContent = `${Math.round(state.zoomScale * 100)}%`;
 }
 
-$('zoomInBtn').onclick = () => {
-  if (!state.pages.length) return;
-  state.zoomScale = Math.min(3.0, Math.round((state.zoomScale + 0.15) * 100) / 100);
+function changeZoom(newZoom) {
+  const viewport = $('canvasViewport');
+  if (!viewport || !state.pages.length) return;
+
+  const oldZoom = state.zoomScale;
+  const targetZoom = Math.min(3.5, Math.max(0.15, Math.round(newZoom * 100) / 100));
+  if (targetZoom === oldZoom) return;
+
+  // Preserve scroll focal center
+  const centerX = viewport.scrollLeft + (viewport.clientWidth / 2);
+  const centerY = viewport.scrollTop + (viewport.clientHeight / 2);
+  const ratio = targetZoom / oldZoom;
+
+  state.zoomScale = targetZoom;
   updateZoomLabel();
   renderStage();
+
+  viewport.scrollLeft = (centerX * ratio) - (viewport.clientWidth / 2);
+  viewport.scrollTop = (centerY * ratio) - (viewport.clientHeight / 2);
+}
+
+$('zoomInBtn').onclick = () => {
+  changeZoom(state.zoomScale + 0.15);
 };
 
 $('zoomOutBtn').onclick = () => {
-  if (!state.pages.length) return;
-  state.zoomScale = Math.max(0.15, Math.round((state.zoomScale - 0.15) * 100) / 100);
-  updateZoomLabel();
-  renderStage();
+  changeZoom(state.zoomScale - 0.15);
 };
 
 $('zoomResetBtn').onclick = () => {
-  if (!state.pages.length) return;
-  state.zoomScale = 1.0;
-  updateZoomLabel();
-  renderStage();
+  changeZoom(1.0);
 };
 
 $('zoomFitBtn').onclick = () => {
@@ -1231,7 +1265,7 @@ $('zoomFitBtn').onclick = () => {
   renderStage();
 };
 
-// Mobile Touch Pinch-to-Zoom & Touch Gesture Handler
+// Mobile Touch & Desktop Pan Controls
 (function initTouchGestureControls() {
   const viewport = $('canvasViewport');
   if (!viewport) return;
@@ -1240,6 +1274,7 @@ $('zoomFitBtn').onclick = () => {
   let initialZoom = 1.0;
   let isPinching = false;
 
+  // Touch Pinch & Pan
   viewport.addEventListener('touchstart', e => {
     if (e.touches.length === 2 && state.pages.length > 0) {
       isPinching = true;
@@ -1252,7 +1287,7 @@ $('zoomFitBtn').onclick = () => {
 
   viewport.addEventListener('touchmove', e => {
     if (isPinching && e.touches.length === 2 && state.pages.length > 0) {
-      e.preventDefault(); // Stop mobile browser page zoom so document zooms smoothly
+      e.preventDefault();
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const currentDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
@@ -1272,26 +1307,80 @@ $('zoomFitBtn').onclick = () => {
   }, { passive: false });
 
   viewport.addEventListener('touchend', e => {
-    if (e.touches.length < 2) {
-      isPinching = false;
-    }
+    if (e.touches.length < 2) isPinching = false;
   }, { passive: true });
 
   viewport.addEventListener('touchcancel', () => {
     isPinching = false;
   }, { passive: true });
 
-  // Trackpad / Ctrl+Wheel Zoom support
+  // Trackpad / Ctrl+Wheel Zoom
   viewport.addEventListener('wheel', e => {
     if (e.ctrlKey && state.pages.length > 0) {
       e.preventDefault();
-      const delta = e.deltaY < 0 ? 0.08 : -0.08;
-      const targetZoom = Math.min(3.5, Math.max(0.2, state.zoomScale + delta));
-      state.zoomScale = Math.round(targetZoom * 100) / 100;
-      updateZoomLabel();
-      renderStage();
+      const delta = e.deltaY < 0 ? 0.10 : -0.10;
+      changeZoom(state.zoomScale + delta);
     }
   }, { passive: false });
+
+  // Desktop Drag-to-Pan (Middle-click, Space+drag, or drag on canvas background)
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+  let panScrollLeft = 0;
+  let panScrollTop = 0;
+  let isSpacePressed = false;
+
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space' && !state.isEditingInline) {
+      const active = document.activeElement;
+      if (!active || (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA')) {
+        isSpacePressed = true;
+        viewport.style.cursor = 'grab';
+      }
+    }
+  });
+
+  window.addEventListener('keyup', e => {
+    if (e.code === 'Space') {
+      isSpacePressed = false;
+      if (!isPanning) viewport.style.cursor = '';
+    }
+  });
+
+  viewport.addEventListener('mousedown', e => {
+    const isTextLayer = e.target.closest('.text-overlay');
+    if (isTextLayer && !isSpacePressed && e.button !== 1) return;
+
+    if (e.button === 0 || e.button === 1) {
+      isPanning = true;
+      panStartX = e.clientX;
+      panStartY = e.clientY;
+      panScrollLeft = viewport.scrollLeft;
+      panScrollTop = viewport.scrollTop;
+      viewport.style.cursor = 'grabbing';
+      viewport.style.userSelect = 'none';
+      if (isSpacePressed || e.button === 1) {
+        e.preventDefault();
+      }
+    }
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!isPanning) return;
+    const dx = e.clientX - panStartX;
+    const dy = e.clientY - panStartY;
+    viewport.scrollLeft = panScrollLeft - dx;
+    viewport.scrollTop = panScrollTop - dy;
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (isPanning) {
+      isPanning = false;
+      viewport.style.cursor = isSpacePressed ? 'grab' : '';
+      viewport.style.userSelect = '';
+    }
+  });
 })();
 
 $('undoBtn').onclick = undo;
@@ -1378,6 +1467,31 @@ function renderStage() {
 
   stageWrapper.style.width = `${displayWidth}px`;
   stageWrapper.style.height = `${displayHeight}px`;
+
+  // Dynamic margin fix: When zoomed in beyond viewport, explicit left and right padding margins
+  // ensure scrollLeft = 0 gives full access to the far left edge, and scrolling right reaches the far right edge.
+  // When smaller than viewport, 'auto' centers the document cleanly.
+  const viewport = $('canvasViewport');
+  const pad = 36;
+  const vpWidth = viewport ? viewport.clientWidth : 800;
+  const vpHeight = viewport ? viewport.clientHeight : 600;
+
+  if (displayWidth + (pad * 2) > vpWidth) {
+    stageWrapper.style.marginLeft = `${pad}px`;
+    stageWrapper.style.marginRight = `${pad}px`;
+  } else {
+    stageWrapper.style.marginLeft = 'auto';
+    stageWrapper.style.marginRight = 'auto';
+  }
+
+  if (displayHeight + (pad * 2) > vpHeight) {
+    stageWrapper.style.marginTop = `${pad}px`;
+    stageWrapper.style.marginBottom = `${pad}px`;
+  } else {
+    stageWrapper.style.marginTop = 'auto';
+    stageWrapper.style.marginBottom = 'auto';
+  }
+
   stageWrapper.innerHTML = '';
 
   // Base canvas image (all ink pixels cleanly erased, neighboring lines 100% intact!)
@@ -1543,6 +1657,26 @@ function expandWordAndEdit(clickX, clickY) {
     const fontSize = Math.max(12, Math.round(finalH * 0.82));
     const textColor = getExactTextColorFromCanvas(ctx, finalX, finalY, finalW, finalH, bgHex);
 
+    let nearestItem = null;
+    let minD = Infinity;
+    if (current.items && current.items.length) {
+      for (const it of current.items) {
+        const d = Math.hypot(it.x - clickX, it.y - clickY);
+        if (d < minD) {
+          minD = d;
+          nearestItem = it;
+        }
+      }
+    }
+
+    const fontFamily = nearestItem ? nearestItem.fontFamily : 'Arial, sans-serif';
+    const pdfFontType = nearestItem ? nearestItem.pdfFontType : 'Helvetica';
+    const isBold = isInkBoxBold(ctx, finalX, finalY, finalW, finalH, bgHex) || (nearestItem ? !!nearestItem.bold : false);
+    const isItalic = nearestItem ? !!nearestItem.italic : false;
+
+    const scaleY = (current.ptHeight || current.height) / current.height;
+    const ptFontSize = Math.max(8, Math.round(fontSize * scaleY));
+
     const newItem = {
       id: uid(),
       text: 'Click to type',
@@ -1552,17 +1686,13 @@ function expandWordAndEdit(clickX, clickY) {
       width: finalW,
       height: finalH,
       fontSize,
-      fontFamily: 'Arial, sans-serif',
-      pdfFontType: 'Helvetica',
+      fontFamily,
+      pdfFontType,
       color: textColor,
-      bold: false,
-      italic: false,
+      bold: isBold,
+      italic: isItalic,
       bgColor: bgHex,
-      pdfX: Math.round(finalX * 0.75),
-      pdfY: Math.round((current.height - finalY - finalH) * 0.75),
-      pdfWidth: Math.round(finalW * 0.75),
-      pdfHeight: Math.round(finalH * 0.75),
-      pdfFontSize: Math.round(fontSize * 0.75),
+      pdfFontSize: ptFontSize,
       pageNum: current.pageNumber || 1,
       isEdited: true,
       isAdded: true
@@ -1595,7 +1725,23 @@ function addTextAtCoordinates(x, y) {
   const current = getCurrentPage();
   if (!current) return;
 
-  const defaultFontSize = Math.max(16, Math.min(48, Math.round(current.width * 0.025)));
+  let nearestItem = null;
+  let minD = Infinity;
+  if (current.items && current.items.length) {
+    for (const it of current.items) {
+      const d = Math.hypot(it.x - safeX, it.y - safeY);
+      if (d < minD) {
+        minD = d;
+        nearestItem = it;
+      }
+    }
+  }
+
+  const fontFamily = nearestItem ? nearestItem.fontFamily : 'Arial, sans-serif';
+  const pdfFontType = nearestItem ? nearestItem.pdfFontType : 'Helvetica';
+  const isBold = nearestItem ? !!nearestItem.bold : false;
+  const isItalic = nearestItem ? !!nearestItem.italic : false;
+  const defaultFontSize = nearestItem ? nearestItem.fontSize : Math.max(16, Math.min(48, Math.round(current.width * 0.025)));
   const defaultWidth = Math.max(130, Math.round(defaultFontSize * 7));
   const defaultHeight = Math.max(26, Math.round(defaultFontSize * 1.3));
 
@@ -1603,7 +1749,7 @@ function addTextAtCoordinates(x, y) {
   const safeY = Math.max(0, Math.min(current.height - defaultHeight, y));
 
   let bgColor = '#ffffff';
-  let textColor = '#000000';
+  let textColor = nearestItem ? nearestItem.color : '#000000';
   try {
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = current.width;
@@ -1618,6 +1764,9 @@ function addTextAtCoordinates(x, y) {
     }
   } catch (err) {}
 
+  const scaleY = (current.ptHeight || current.height) / current.height;
+  const ptFontSize = nearestItem ? (nearestItem.pdfFontSize || Math.round(defaultFontSize * scaleY)) : Math.round(defaultFontSize * scaleY);
+
   const newItem = {
     id: uid(),
     text: 'Click to type',
@@ -1627,17 +1776,13 @@ function addTextAtCoordinates(x, y) {
     width: defaultWidth,
     height: defaultHeight,
     fontSize: defaultFontSize,
-    fontFamily: 'Arial, sans-serif',
-    pdfFontType: 'Helvetica',
+    fontFamily,
+    pdfFontType,
     color: textColor,
-    bold: false,
-    italic: false,
-    bgColor: bgColor,
-    pdfX: Math.round(safeX * ((current.ptWidth || current.width) / current.width)),
-    pdfY: Math.round(((current.height - safeY - defaultHeight) * ((current.ptHeight || current.height) / current.height))),
-    pdfWidth: Math.round(defaultWidth * 0.75),
-    pdfHeight: Math.round(defaultHeight * 0.75),
-    pdfFontSize: Math.round(defaultFontSize * 0.75),
+    bold: isBold,
+    italic: isItalic,
+    bgColor,
+    pdfFontSize: ptFontSize,
     pageNum: current.pageNumber || 1,
     isEdited: true,
     isAdded: true
@@ -1667,7 +1812,11 @@ function activateDirectEditing(el, item) {
 
   el.contentEditable = 'true';
   el.classList.add('editing');
-  el.style.backgroundColor = '#ffffff';
+  el.style.backgroundColor = item.bgColor || '#ffffff';
+  el.style.color = item.color || '#000000';
+  el.style.fontFamily = item.fontFamily || 'Arial, sans-serif';
+  el.style.fontWeight = item.bold ? '700' : '400';
+  el.style.fontStyle = item.italic ? 'italic' : 'normal';
 
   // If this was a detected block with generic placeholder, clear so typing replaces it seamlessly
   if ((item.text === 'Edit text' || item.text === 'Click to type') && !item.isEdited) {
@@ -1794,8 +1943,9 @@ function renderProperties() {
   const item = getSelectedItem();
   const noSelection = $('noSelectionState');
   const selectionProps = $('selectionProperties');
+  const current = getCurrentPage();
 
-  if (!item) {
+  if (!item || !current) {
     if (noSelection) noSelection.classList.remove('hidden');
     if (selectionProps) selectionProps.classList.add('hidden');
     return;
@@ -1805,8 +1955,26 @@ function renderProperties() {
   if (selectionProps) selectionProps.classList.remove('hidden');
 
   $('propTextInput').value = item.text;
-  $('propFontSize').value = item.fontSize;
-  $('fontSizeDisplay').textContent = `${item.fontSize}px`;
+
+  const scaleY = (current.ptHeight || current.height) / current.height;
+  const currentPtSize = item.pdfFontSize || Math.max(6, Math.round(item.fontSize * scaleY));
+  $('propFontSize').value = currentPtSize;
+  $('fontSizeDisplay').textContent = `${currentPtSize} pt`;
+
+  if ($('propFontFamily')) {
+    const fam = (item.fontFamily || '').toLowerCase();
+    if (item.pdfFontType === 'TimesRoman' || fam.includes('times')) {
+      $('propFontFamily').value = "'Times New Roman', serif";
+    } else if (item.pdfFontType === 'Courier' || fam.includes('courier')) {
+      $('propFontFamily').value = "'Courier New', monospace";
+    } else if (fam.includes('georgia')) {
+      $('propFontFamily').value = "Georgia, serif";
+    } else if (fam.includes('trebuchet')) {
+      $('propFontFamily').value = "'Trebuchet MS', sans-serif";
+    } else {
+      $('propFontFamily').value = "Arial, sans-serif";
+    }
+  }
 
   $('toggleBoldBtn').className = `btn btn-secondary ${item.bold ? 'btn-primary' : ''}`;
   $('toggleItalicBtn').className = `btn btn-secondary ${item.italic ? 'btn-primary' : ''}`;
@@ -1837,16 +2005,31 @@ $('propTextInput').oninput = e => {
   if (!item) return;
   item.text = e.target.value;
   item.isEdited = true;
-  const el = $(`layer-${item.id}`);
-  if (el) {
-    el.textContent = item.text;
-  }
+  renderStage();
 };
 $('propTextInput').onchange = () => saveHistory();
 
+if ($('propFontFamily')) {
+  $('propFontFamily').onchange = e => {
+    const fam = e.target.value;
+    let pdfFontType = 'Helvetica';
+    if (fam.toLowerCase().includes('times') || fam.toLowerCase().includes('serif') || fam.toLowerCase().includes('georgia')) {
+      pdfFontType = 'TimesRoman';
+    } else if (fam.toLowerCase().includes('courier') || fam.toLowerCase().includes('mono')) {
+      pdfFontType = 'Courier';
+    }
+    updateSelected({ fontFamily: fam, pdfFontType });
+  };
+}
+
 $('propFontSize').oninput = e => {
   const val = parseInt(e.target.value, 10);
-  if (val > 0) updateSelected({ fontSize: val }, false);
+  if (val > 0) {
+    const current = getCurrentPage();
+    const scaleY = current ? ((current.ptHeight || current.height) / current.height) : 1;
+    const pxVal = Math.round(val / scaleY);
+    updateSelected({ fontSize: pxVal, pdfFontSize: val, customFontSize: true }, false);
+  }
 };
 $('propFontSize').onchange = () => saveHistory();
 
@@ -1932,8 +2115,23 @@ window.addEventListener('keydown', e => {
   }
 });
 
+function sanitizeForPdfFont(text) {
+  if (!text) return '';
+  return text
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\u2014/g, '--')
+    .replace(/\u2013/g, '-')
+    .replace(/\u2022/g, '*')
+    .replace(/\u2026/g, '...')
+    .replace(/[^\x20-\x7E\xA0-\xFF]/g, '');
+}
+
 // Export to PNG
 $('exportImageBtn').onclick = async () => {
+  if (document.activeElement && typeof document.activeElement.blur === 'function') {
+    document.activeElement.blur();
+  }
   const current = getCurrentPage();
   if (!current) return;
 
@@ -1955,6 +2153,17 @@ $('exportImageBtn').onclick = async () => {
       baseImg.src = current.dataUrl;
     });
     ctx.drawImage(baseImg, 0, 0);
+
+    // Erase deleted items
+    if (current.deletedItems && current.deletedItems.length) {
+      current.deletedItems.forEach(del => {
+        ctx.save();
+        ctx.fillStyle = del.bgColor || '#ffffff';
+        const origW = Math.max(del.width, (del.originalText || del.text || '').length * del.fontSize * 0.68);
+        ctx.fillRect(Math.max(0, del.x - 2), Math.max(0, del.y - 2), origW + 4, del.height + 4);
+        ctx.restore();
+      });
+    }
 
     current.items.forEach(t => {
       if (t.text && t.text.trim()) {
@@ -1983,8 +2192,11 @@ $('exportImageBtn').onclick = async () => {
   }
 };
 
-// EXPORT PDF: Direct Vector PDF-lib with strict boundary preservation
+// EXPORT PDF: Direct Vector PDF-lib with strict boundary preservation & exact preview matching
 $('exportPdfBtn').onclick = async () => {
+  if (document.activeElement && typeof document.activeElement.blur === 'function') {
+    document.activeElement.blur();
+  }
   if (!state.pages.length) return;
   setStatus('Exporting PDF with 100% original quality and compact file size…', true);
 
@@ -2005,102 +2217,139 @@ $('exportPdfBtn').onclick = async () => {
         TimesRomanItalic: await pdfDoc.embedFont(StandardFonts.TimesRomanItalic),
         TimesRomanBoldItalic: await pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic),
         Courier: await pdfDoc.embedFont(StandardFonts.Courier),
-        CourierBold: await pdfDoc.embedFont(StandardFonts.CourierBold)
+        CourierBold: await pdfDoc.embedFont(StandardFonts.CourierBold),
+        CourierOblique: await pdfDoc.embedFont(StandardFonts.CourierOblique),
+        CourierBoldOblique: await pdfDoc.embedFont(StandardFonts.CourierBoldOblique)
       };
 
       for (let pIdx = 0; pIdx < state.pages.length; pIdx++) {
         const p = state.pages[pIdx];
         const page = pdfDoc.getPage(pIdx);
 
-        // A. Erase deleted items
+        const pageHeight = p.ptHeight || page.getHeight() || p.height;
+        const scaleX = (p.ptWidth || p.width) / p.width;
+        const scaleY = (p.ptHeight || p.height) / p.height;
+
+        const mediaBox = page.getMediaBox ? page.getMediaBox() : { x: 0, y: 0 };
+        const cropBox = page.getCropBox ? page.getCropBox() : mediaBox;
+        const boxOffsetX = cropBox.x || mediaBox.x || 0;
+        const boxOffsetY = cropBox.y || mediaBox.y || 0;
+
+        // A. Erase deleted items: exact mirror of preview overlay dimensions
         if (p.deletedItems && p.deletedItems.length) {
           p.deletedItems.forEach(del => {
             const bg = hexToRgb(del.bgColor || '#ffffff');
-            const fontSizePt = del.pdfFontSize || 12;
-            const padPt = 2.5;
-            const descenderPt = fontSizePt * 0.32;
-            const ascenderPt = fontSizePt * 0.95;
+            const delOrigW = Math.max(del.width, (del.originalText || del.text || '').length * del.fontSize * 0.68);
+            const overlayLeftPt = (del.x - 2) * scaleX;
+            const overlayTopPt = (del.y - 2) * scaleY;
+            const overlayWidthPt = (delOrigW + 4) * scaleX;
+            const overlayHeightPt = (del.height + 4) * scaleY;
 
-            const pdfScaleX = (p.ptWidth || p.width) / p.width;
-            const pdfScaleY = (p.ptHeight || p.height) / p.height;
-            const originPdfX = del.pdfX !== undefined ? del.pdfX : del.x * pdfScaleX;
-            const originPdfY = del.pdfY !== undefined ? del.pdfY : (p.height - del.y - del.height) * pdfScaleY;
-
-            const origCharWidthEstimate = (del.originalText || del.str || '').length * fontSizePt * 0.72;
-            const canvasWidthPt = (del.width / (p.width || 1)) * (p.ptWidth || p.width || 1);
-            const origWidthPt = Math.max(del.pdfWidth || 0, canvasWidthPt, origCharWidthEstimate);
+            const rectX = overlayLeftPt + boxOffsetX;
+            const rectY = pageHeight - (overlayTopPt + overlayHeightPt) + boxOffsetY;
 
             page.drawRectangle({
-              x: Math.max(0, originPdfX - padPt),
-              y: Math.max(0, originPdfY - descenderPt - padPt),
-              width: origWidthPt + (padPt * 2) + 2,
-              height: ascenderPt + descenderPt + (padPt * 2),
+              x: Math.max(0, rectX),
+              y: Math.max(0, rectY),
+              width: overlayWidthPt,
+              height: overlayHeightPt,
               color: rgb(bg.r, bg.g, bg.b),
               opacity: 1.0
             });
           });
         }
 
-        // B. Apply edited or added text items with 100% opaque cover and crisp text
+        // B. Apply edited, replaced, or added text items with 100% opaque cover and crisp text
         p.items.forEach(t => {
-          if ((t.isEdited && t.text !== t.originalText) || t.isAdded) {
+          const isEdited = (t.isEdited && t.text !== t.originalText) || (t.isEdited && !t.isAdded) || (!t.isAdded && t.text !== t.originalText);
+          const isAdded = !!t.isAdded;
+
+          // 1. Cleanly and completely cover original text with 100% opaque rectangle matching preview
+          if (isEdited) {
             const bg = hexToRgb(t.bgColor || '#ffffff');
-            const fontSizePt = t.pdfFontSize || 12;
-            const padPt = 2.5;
-            const descenderPt = fontSizePt * 0.32;
-            const ascenderPt = fontSizePt * 0.95;
+            const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
+            const overlayLeftPt = (t.x - 2) * scaleX;
+            const overlayTopPt = (t.y - 2) * scaleY;
+            const overlayWidthPt = (origW + 4) * scaleX;
+            const overlayHeightPt = (t.height + 4) * scaleY;
 
-            const pdfScaleX = (p.ptWidth || p.width) / p.width;
-            const pdfScaleY = (p.ptHeight || p.height) / p.height;
-            const originPdfX = t.pdfX !== undefined ? t.pdfX : t.x * pdfScaleX;
-            const originPdfY = t.pdfY !== undefined ? t.pdfY : (p.height - t.y - t.height) * pdfScaleY;
+            const rectX = overlayLeftPt + boxOffsetX;
+            const rectY = pageHeight - (overlayTopPt + overlayHeightPt) + boxOffsetY;
 
-            const origCharWidthEstimate = (t.originalText || '').length * fontSizePt * 0.72;
-            const canvasWidthPt = (t.width / (p.width || 1)) * (p.ptWidth || p.width || 1);
-            const origWidthPt = Math.max(t.pdfWidth || 0, canvasWidthPt, origCharWidthEstimate);
-
-            // Cleanly and completely cover old text with 100% opaque rectangle
             page.drawRectangle({
-              x: Math.max(0, originPdfX - padPt),
-              y: Math.max(0, originPdfY - descenderPt - padPt),
-              width: origWidthPt + (padPt * 2) + 2,
-              height: ascenderPt + descenderPt + (padPt * 2),
+              x: Math.max(0, rectX),
+              y: Math.max(0, rectY),
+              width: overlayWidthPt,
+              height: overlayHeightPt,
               color: rgb(bg.r, bg.g, bg.b),
               opacity: 1.0
             });
+          } else if (isAdded && t.bgColor && t.bgColor !== 'transparent' && t.bgColor !== '#ffffff') {
+            const bg = hexToRgb(t.bgColor);
+            const overlayLeftPt = (t.x - 2) * scaleX;
+            const overlayTopPt = (t.y - 2) * scaleY;
+            const overlayWidthPt = (t.width + 4) * scaleX;
+            const overlayHeightPt = (t.height + 4) * scaleY;
 
-            // Select matching vector font
+            const rectX = overlayLeftPt + boxOffsetX;
+            const rectY = pageHeight - (overlayTopPt + overlayHeightPt) + boxOffsetY;
+
+            page.drawRectangle({
+              x: Math.max(0, rectX),
+              y: Math.max(0, rectY),
+              width: overlayWidthPt,
+              height: overlayHeightPt,
+              color: rgb(bg.r, bg.g, bg.b),
+              opacity: 1.0
+            });
+          }
+
+          // 2. Draw new text if present and edited/added
+          if ((isEdited || isAdded) && t.text && t.text.trim()) {
+            const fam = (t.fontFamily || '').toLowerCase();
             let fontKey = 'Helvetica';
-            if (t.pdfFontType === 'TimesRoman') {
+            if (t.pdfFontType === 'TimesRoman' || fam.includes('times') || fam.includes('serif') || fam.includes('georgia')) {
               fontKey = t.bold && t.italic ? 'TimesRomanBoldItalic' : t.bold ? 'TimesRomanBold' : t.italic ? 'TimesRomanItalic' : 'TimesRoman';
-            } else if (t.pdfFontType === 'Courier') {
-              fontKey = t.bold ? 'CourierBold' : 'Courier';
+            } else if (t.pdfFontType === 'Courier' || fam.includes('courier') || fam.includes('mono')) {
+              fontKey = t.bold && t.italic ? 'CourierBoldOblique' : t.bold ? 'CourierBold' : t.italic ? 'CourierOblique' : 'Courier';
             } else {
               fontKey = t.bold && t.italic ? 'HelveticaBoldOblique' : t.bold ? 'HelveticaBold' : t.italic ? 'HelveticaOblique' : 'Helvetica';
             }
             const fontObj = fonts[fontKey] || fonts.Helvetica;
 
-            // Draw new crisp vector text
-            if (t.text && t.text.trim()) {
-              const fg = hexToRgb(t.color || '#000000');
+            const fontSizePt = (t.pdfFontSize && !t.customFontSize) ? t.pdfFontSize : Math.max(6, t.fontSize * scaleY);
+            const textLeftPt = t.x * scaleX + boxOffsetX;
+
+            // In preview, text is aligned with CSS top: t.y * coordRatio.
+            // Baseline is at (t.y + t.fontSize * 0.81) in canvas coordinates.
+            const baselineFromTop = (t.baselineY !== undefined && t.text === t.originalText)
+              ? t.baselineY
+              : (t.y + t.fontSize * 0.81);
+            const textBaselineY = pageHeight - (baselineFromTop * scaleY) + boxOffsetY;
+
+            const fg = hexToRgb(t.color || '#000000');
+            const safeText = sanitizeForPdfFont(t.text);
+
+            if (safeText) {
               try {
-                page.drawText(t.text, {
-                  x: originPdfX,
-                  y: originPdfY,
+                page.drawText(safeText, {
+                  x: Math.max(0, textLeftPt),
+                  y: Math.max(0, textBaselineY),
                   size: fontSizePt,
                   font: fontObj,
                   color: rgb(fg.r, fg.g, fg.b),
+                  lineHeight: fontSizePt * 1.15,
                   opacity: 1.0
                 });
               } catch (fontErr) {
-                console.warn('Encoding fallback for:', t.text);
+                console.warn('Encoding fallback for:', t.text, fontErr);
               }
             }
           }
         });
       }
 
-      const pdfBytes = await pdfDoc.save();
+      const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const blobUrl = URL.createObjectURL(blob);
       downloadFile(blobUrl, `${getDocumentBaseName()}-edited.pdf`);
@@ -2134,6 +2383,17 @@ $('exportPdfBtn').onclick = async () => {
         });
         ctx.drawImage(baseImg, 0, 0);
 
+        // Erase deleted items:
+        if (p.deletedItems && p.deletedItems.length) {
+          p.deletedItems.forEach(del => {
+            ctx.save();
+            ctx.fillStyle = del.bgColor || '#ffffff';
+            const delOrigW = Math.max(del.width, (del.originalText || del.text || '').length * del.fontSize * 0.68);
+            ctx.fillRect(Math.max(0, del.x - 2), Math.max(0, del.y - 2), delOrigW + 4, del.height + 4);
+            ctx.restore();
+          });
+        }
+
         p.items.forEach(t => {
           if (t.text && t.text.trim()) {
             ctx.save();
@@ -2150,10 +2410,10 @@ $('exportPdfBtn').onclick = async () => {
           }
         });
 
-        const jpegUrl = pageCanvas.toDataURL('image/jpeg', 0.92);
-        const res = await fetch(jpegUrl);
+        const pngUrl = pageCanvas.toDataURL('image/png');
+        const res = await fetch(pngUrl);
         const imgBuffer = await res.arrayBuffer();
-        const embeddedImg = await pdfDoc.embedJpg(imgBuffer);
+        const embeddedImg = await pdfDoc.embedPng(imgBuffer);
 
         const page = pdfDoc.addPage([pageWidth, pageHeight]);
         page.drawImage(embeddedImg, {
@@ -2164,7 +2424,7 @@ $('exportPdfBtn').onclick = async () => {
         });
       }
 
-      const pdfBytes = await pdfDoc.save();
+      const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const blobUrl = URL.createObjectURL(blob);
       downloadFile(blobUrl, `${getDocumentBaseName()}-edited.pdf`);

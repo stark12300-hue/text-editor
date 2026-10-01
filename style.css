@@ -540,17 +540,16 @@ button, input, select, textarea {
   text-align: center;
 }
 
-/* Scrollable Viewport — Fix: align-items flex-start + margin auto prevents top clipping */
+/* Scrollable Viewport — Full horizontal & vertical pan/scroll without edge clipping */
 .canvas-viewport {
   flex: 1;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 30px 20px;
   position: relative;
+  padding: 0;
+  cursor: default;
   background-image: 
     linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
