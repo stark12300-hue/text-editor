@@ -1695,11 +1695,12 @@ function renderStage() {
     el.style.width = `${t.width * coordRatio}px`;
     el.style.height = `${t.height * coordRatio}px`;
     el.style.fontSize = `${t.fontSize * coordRatio}px`;
-    el.style.lineHeight = '1';
+    el.style.lineHeight = state.mode === 'image' ? '1' : '1.05';
     el.style.fontFamily = t.fontFamily || 'Arial, sans-serif';
     el.style.fontWeight = t.bold ? '700' : '400';
     el.style.fontStyle = t.italic ? 'italic' : 'normal';
-    el.style.letterSpacing = `${t.letterSpacing || 0}px`;
+    el.style.padding = state.mode === 'image' ? '0' : '0 1px';
+    el.style.letterSpacing = state.mode === 'image' ? `${t.letterSpacing || 0}px` : '0px';
 
     if (state.mode === 'image' && !isEdited) {
       el.style.color = 'transparent';
@@ -1984,7 +1985,8 @@ function activateDirectEditing(el, item) {
   el.style.fontFamily = item.fontFamily || 'Arial, sans-serif';
   el.style.fontWeight = item.bold ? '700' : '400';
   el.style.fontStyle = item.italic ? 'italic' : 'normal';
-  el.style.letterSpacing = `${item.letterSpacing || 0}px`;
+  el.style.padding = state.mode === 'image' ? '0' : '0 1px';
+  el.style.letterSpacing = state.mode === 'image' ? `${item.letterSpacing || 0}px` : '0px';
 
   // If this was a detected block with generic placeholder, clear so typing replaces it seamlessly
   if ((item.text === 'Edit text' || item.text === 'Click to type') && !item.isEdited) {
