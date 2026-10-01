@@ -2228,246 +2228,124 @@ $('exportImageBtn').onclick = async () => {
   }
 };
 
-// EXPORT PDF: Direct Vector PDF-lib with strict boundary preservation & exact preview matching
+// EXPORT PDF: Render the prepared page image used by the editor.
+// PDF pages are rasterized during load, with original text surgically removed.
+// Exporting that prepared render avoids blank pages and PDF-coordinate mismatches.
 $('exportPdfBtn').onclick = async () => {
   if (document.activeElement && typeof document.activeElement.blur === 'function') {
     document.activeElement.blur();
   }
   if (!state.pages.length) return;
-  setStatus('Exporting PDF with 100% original quality and compact file size…', true);
+
+  setStatus('Exporting PDF…', true);
 
   try {
-    const { PDFDocument, rgb, StandardFonts } = PDFLib;
+    const { PDFDocument } = PDFLib;
+    const pdfDoc = await PDFDocument.create();
 
-    if (state.originalPdfBytes) {
-      // 1. DIRECT LOSSLESS VECTOR ENGINE:
-      const pdfDoc = await PDFDocument.load(state.originalPdfBytes);
+    for (let i = 0; i < state.pages.length; i++) {
+      const p = state.pages[i];
+      setStatus(`Exporting page ${i + 1} of ${state.pages.length}…`, true);
 
-      const fonts = {
-        Helvetica: await pdfDoc.embedFont(StandardFonts.Helvetica),
-        HelveticaBold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
-        HelveticaOblique: await pdfDoc.embedFont(StandardFonts.HelveticaOblique),
-        HelveticaBoldOblique: await pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique),
-        TimesRoman: await pdfDoc.embedFont(StandardFonts.TimesRoman),
-        TimesRomanBold: await pdfDoc.embedFont(StandardFonts.TimesRomanBold),
-        TimesRomanItalic: await pdfDoc.embedFont(StandardFonts.TimesRomanItalic),
-        TimesRomanBoldItalic: await pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic),
-        Courier: await pdfDoc.embedFont(StandardFonts.Courier),
-        CourierBold: await pdfDoc.embedFont(StandardFonts.CourierBold),
-        CourierOblique: await pdfDoc.embedFont(StandardFonts.CourierOblique),
-        CourierBoldOblique: await pdfDoc.embedFont(StandardFonts.CourierBoldOblique)
-      };
+      const pageWidth = p.ptWidth || 595.28;
+      const pageHeight = p.ptHeight || 841.89;
 
-      for (let pIdx = 0; pIdx < state.pages.length; pIdx++) {
-        const p = state.pages[pIdx];
-        const page = pdfDoc.getPage(pIdx);
+      const canvas = document.createElement('canvas');
+      canvas.width = p.width;
+      canvas.height = p.height;
 
-        const pageHeight = p.ptHeight || page.getHeight() || p.height;
-        const scaleX = (p.ptWidth || p.width) / p.width;
-        const scaleY = (p.ptHeight || p.height) / p.height;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
 
-        const mediaBox = page.getMediaBox ? page.getMediaBox() : { x: 0, y: 0 };
-        const cropBox = page.getCropBox ? page.getCropBox() : mediaBox;
-        const boxOffsetX = cropBox.x || mediaBox.x || 0;
-        const boxOffsetY = cropBox.y || mediaBox.y || 0;
+      const baseImg = new Image();
+      baseImg.crossOrigin = 'anonymous';
+      await new Promise((resolve, reject) => {
+        baseImg.onload = resolve;
+        baseImg.onerror = () => reject(new Error(`Could not render page ${i + 1} for export.`));
+        baseImg.src = p.dataUrl;
+      });
 
-        // A. Erase deleted items: exact mirror of preview overlay dimensions
-        if (p.deletedItems && p.deletedItems.length) {
-          p.deletedItems.forEach(del => {
-            const bg = hexToRgb(del.bgColor || '#ffffff');
-            const delOrigW = Math.max(del.width, (del.originalText || del.text || '').length * del.fontSize * 0.68);
-            const overlayLeftPt = (del.x - 2) * scaleX;
-            const overlayTopPt = (del.y - 2) * scaleY;
-            const overlayWidthPt = (delOrigW + 4) * scaleX;
-            const overlayHeightPt = (del.height + 4) * scaleY;
+      ctx.drawImage(baseImg, 0, 0, p.width, p.height);
 
-            const rectX = overlayLeftPt + boxOffsetX;
-            const rectY = pageHeight - (overlayTopPt + overlayHeightPt) + boxOffsetY;
+      if (state.originalPdfBytes) {
+        // PDF text has already been erased from p.dataUrl. Draw the current
+        // text layer back on top, preserving all other PDF graphics/images.
+        for (const t of (p.items || [])) {
+          if (!t.text || !t.text.trim()) continue;
 
-            page.drawRectangle({
-              x: Math.max(0, rectX),
-              y: Math.max(0, rectY),
-              width: overlayWidthPt,
-              height: overlayHeightPt,
-              color: rgb(bg.r, bg.g, bg.b),
-              opacity: 1.0
-            });
-          });
+          ctx.save();
+          ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
+          ctx.textBaseline = 'top';
+
+          if (t.isAdded && t.bgColor && t.bgColor !== 'transparent') {
+            ctx.fillStyle = t.bgColor;
+            ctx.fillRect(
+              Math.max(0, t.x - 2),
+              Math.max(0, t.y - 2),
+              Math.max(t.width, (t.text || '').length * t.fontSize * 0.68) + 4,
+              t.height + 4
+            );
+          }
+
+          ctx.fillStyle = t.color || '#000000';
+          ctx.fillText(t.text, t.x, t.y);
+          ctx.restore();
         }
-
-        // B. Apply edited, replaced, or added text items with 100% opaque cover and crisp text
-        p.items.forEach(t => {
-          const isEdited = (t.isEdited && t.text !== t.originalText) || (t.isEdited && !t.isAdded) || (!t.isAdded && t.text !== t.originalText);
-          const isAdded = !!t.isAdded;
-
-          // 1. Cleanly and completely cover original text with 100% opaque rectangle matching preview
-          if (isEdited) {
-            const bg = hexToRgb(t.bgColor || '#ffffff');
-            const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
-            const overlayLeftPt = (t.x - 2) * scaleX;
-            const overlayTopPt = (t.y - 2) * scaleY;
-            const overlayWidthPt = (origW + 4) * scaleX;
-            const overlayHeightPt = (t.height + 4) * scaleY;
-
-            const rectX = overlayLeftPt + boxOffsetX;
-            const rectY = pageHeight - (overlayTopPt + overlayHeightPt) + boxOffsetY;
-
-            page.drawRectangle({
-              x: Math.max(0, rectX),
-              y: Math.max(0, rectY),
-              width: overlayWidthPt,
-              height: overlayHeightPt,
-              color: rgb(bg.r, bg.g, bg.b),
-              opacity: 1.0
-            });
-          } else if (isAdded && t.bgColor && t.bgColor !== 'transparent' && t.bgColor !== '#ffffff') {
-            const bg = hexToRgb(t.bgColor);
-            const overlayLeftPt = (t.x - 2) * scaleX;
-            const overlayTopPt = (t.y - 2) * scaleY;
-            const overlayWidthPt = (t.width + 4) * scaleX;
-            const overlayHeightPt = (t.height + 4) * scaleY;
-
-            const rectX = overlayLeftPt + boxOffsetX;
-            const rectY = pageHeight - (overlayTopPt + overlayHeightPt) + boxOffsetY;
-
-            page.drawRectangle({
-              x: Math.max(0, rectX),
-              y: Math.max(0, rectY),
-              width: overlayWidthPt,
-              height: overlayHeightPt,
-              color: rgb(bg.r, bg.g, bg.b),
-              opacity: 1.0
-            });
-          }
-
-          // 2. Draw new text if present and edited/added
-          if ((isEdited || isAdded) && t.text && t.text.trim()) {
-            const fam = (t.fontFamily || '').toLowerCase();
-            let fontKey = 'Helvetica';
-            if (t.pdfFontType === 'TimesRoman' || fam.includes('times') || fam.includes('serif') || fam.includes('georgia')) {
-              fontKey = t.bold && t.italic ? 'TimesRomanBoldItalic' : t.bold ? 'TimesRomanBold' : t.italic ? 'TimesRomanItalic' : 'TimesRoman';
-            } else if (t.pdfFontType === 'Courier' || fam.includes('courier') || fam.includes('mono')) {
-              fontKey = t.bold && t.italic ? 'CourierBoldOblique' : t.bold ? 'CourierBold' : t.italic ? 'CourierOblique' : 'Courier';
-            } else {
-              fontKey = t.bold && t.italic ? 'HelveticaBoldOblique' : t.bold ? 'HelveticaBold' : t.italic ? 'HelveticaOblique' : 'Helvetica';
-            }
-            const fontObj = fonts[fontKey] || fonts.Helvetica;
-
-            const fontSizePt = (t.pdfFontSize && !t.customFontSize) ? t.pdfFontSize : Math.max(6, t.fontSize * scaleY);
-            const textLeftPt = t.x * scaleX + boxOffsetX;
-
-            // In preview, text is aligned with CSS top: t.y * coordRatio.
-            // Baseline is at (t.y + t.fontSize * 0.81) in canvas coordinates.
-            const baselineFromTop = (t.baselineY !== undefined && t.text === t.originalText)
-              ? t.baselineY
-              : (t.y + t.fontSize * 0.81);
-            const textBaselineY = pageHeight - (baselineFromTop * scaleY) + boxOffsetY;
-
-            const fg = hexToRgb(t.color || '#000000');
-            const safeText = sanitizeForPdfFont(t.text);
-
-            if (safeText) {
-              try {
-                page.drawText(safeText, {
-                  x: Math.max(0, textLeftPt),
-                  y: Math.max(0, textBaselineY),
-                  size: fontSizePt,
-                  font: fontObj,
-                  color: rgb(fg.r, fg.g, fg.b),
-                  lineHeight: fontSizePt * 1.15,
-                  opacity: 1.0
-                });
-              } catch (fontErr) {
-                console.warn('Encoding fallback for:', t.text, fontErr);
-              }
-            }
-          }
-        });
-      }
-
-      const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-      const blobUrl = URL.createObjectURL(blob);
-      downloadFile(blobUrl, `${getDocumentBaseName()}-edited.pdf`);
-      URL.revokeObjectURL(blobUrl);
-
-      setStatus('Exported PDF with 100% original quality and compact file size!');
-    } else {
-      // 2. High-Quality Standard Layout Mode (For image uploads & sample invoices):
-      const pdfDoc = await PDFDocument.create();
-
-      for (let i = 0; i < state.pages.length; i++) {
-        const p = state.pages[i];
-        setStatus(`Exporting page ${i + 1} of ${state.pages.length}…`, true);
-
-        const pageWidth = p.ptWidth || 595.28;
-        const pageHeight = p.ptHeight || 841.89;
-
-        const pageCanvas = document.createElement('canvas');
-        pageCanvas.width = p.width;
-        pageCanvas.height = p.height;
-        const ctx = pageCanvas.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-
-        const baseImg = new Image();
-        baseImg.crossOrigin = 'anonymous';
-        await new Promise((resolve, reject) => {
-          baseImg.onload = resolve;
-          baseImg.onerror = reject;
-          baseImg.src = p.dataUrl;
-        });
-        ctx.drawImage(baseImg, 0, 0);
-
-        // Erase deleted items:
+      } else {
+        // Image uploads start from a pristine image.
         if (p.deletedItems && p.deletedItems.length) {
-          p.deletedItems.forEach(del => {
+          for (const del of p.deletedItems) {
             ctx.save();
             ctx.fillStyle = del.bgColor || '#ffffff';
-            const delOrigW = Math.max(del.width, (del.originalText || del.text || '').length * del.fontSize * 0.68);
+            const delOrigW = Math.max(
+              del.width,
+              (del.originalText || del.text || '').length * del.fontSize * 0.68
+            );
             ctx.fillRect(Math.max(0, del.x - 2), Math.max(0, del.y - 2), delOrigW + 4, del.height + 4);
             ctx.restore();
-          });
+          }
         }
 
-        p.items.forEach(t => {
-          if (t.text && t.text.trim()) {
-            ctx.save();
-            if (((t.isEdited && t.text !== t.originalText) || t.isAdded) && t.bgColor && t.bgColor !== 'transparent') {
-              ctx.fillStyle = t.bgColor;
-              const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
-              ctx.fillRect(Math.max(0, t.x - 2), Math.max(0, t.y - 2), origW + 4, t.height + 4);
-            }
-            ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
-            ctx.fillStyle = t.color || '#000000';
-            ctx.textBaseline = 'top';
-            ctx.fillText(t.text, t.x, t.y);
-            ctx.restore();
+        for (const t of (p.items || [])) {
+          if (!t.text || !t.text.trim()) continue;
+
+          ctx.save();
+          const isEdited = !!t.isEdited && t.text !== t.originalText;
+          if ((isEdited || t.isAdded) && t.bgColor && t.bgColor !== 'transparent') {
+            ctx.fillStyle = t.bgColor;
+            const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
+            ctx.fillRect(Math.max(0, t.x - 2), Math.max(0, t.y - 2), origW + 4, t.height + 4);
           }
-        });
 
-        const pngUrl = pageCanvas.toDataURL('image/png');
-        const res = await fetch(pngUrl);
-        const imgBuffer = await res.arrayBuffer();
-        const embeddedImg = await pdfDoc.embedPng(imgBuffer);
-
-        const page = pdfDoc.addPage([pageWidth, pageHeight]);
-        page.drawImage(embeddedImg, {
-          x: 0,
-          y: 0,
-          width: pageWidth,
-          height: pageHeight
-        });
+          ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
+          ctx.fillStyle = t.color || '#000000';
+          ctx.textBaseline = 'top';
+          ctx.fillText(t.text, t.x, t.y);
+          ctx.restore();
+        }
       }
 
-      const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-      const blobUrl = URL.createObjectURL(blob);
-      downloadFile(blobUrl, `${getDocumentBaseName()}-edited.pdf`);
-      URL.revokeObjectURL(blobUrl);
-
-      setStatus('Exported PDF successfully.');
+      const pngBytes = await (await fetch(canvas.toDataURL('image/png'))).arrayBuffer();
+      const embedded = await pdfDoc.embedPng(pngBytes);
+      const page = pdfDoc.addPage([pageWidth, pageHeight]);
+      page.drawImage(embedded, { x: 0, y: 0, width: pageWidth, height: pageHeight });
     }
+
+    const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
+    const blobUrl = URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' }));
+    downloadFile(blobUrl, `${getDocumentBaseName()}-edited.pdf`);
+    URL.revokeObjectURL(blobUrl);
+
+    setStatus('Exported PDF successfully.');
+  } catch (err) {
+    console.error('PDF Export error:', err);
+    setStatus(err.message || 'Failed to export PDF.');
+  } finally {
+    setStatus('Ready');
+  }
+};
+
   } catch (err) {
     console.error('PDF Export error:', err);
     setStatus(err.message || 'Failed to export PDF.');
