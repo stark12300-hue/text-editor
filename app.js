@@ -342,8 +342,6 @@ async function extractTextFromImageAi(dataUrl) {
 }
 
 function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = '') {
-  // Raster images contain no font metadata. Match the OCR box against common
-  // browser fonts so replacements retain the closest visual family and width.
   const safeW = Math.max(1, Math.min(Math.round(width), ctx.canvas.width - Math.max(0, Math.round(x))));
   const safeH = Math.max(1, Math.min(Math.round(height), ctx.canvas.height - Math.max(0, Math.round(y))));
   let dark = 0, total = 0;
@@ -359,46 +357,36 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
       if (Math.abs(data[i]-br)+Math.abs(data[i+1]-bgc)+Math.abs(data[i+2]-bb) > 90) dark++;
     }
   } catch (_) {}
-
   const density = total ? dark / total : 0;
   const bold = density > 0.20 || (width / Math.max(height,1) < 7 && density > 0.14);
-  const fontSize = Math.max(8, Math.round(height * 0.92));
 
-  const candidates = [
-    'Arial, sans-serif',
-    'Helvetica, Arial, sans-serif',
-    'Segoe UI, Arial, sans-serif',
-    'Roboto, Arial, sans-serif',
-    'Verdana, sans-serif',
-    'Trebuchet MS, sans-serif',
-    'Georgia, serif',
-    'Times New Roman, serif',
-    'Courier New, monospace'
-  ];
+  const candidates = ['Arial, sans-serif','Helvetica, Arial, sans-serif','Segoe UI, Arial, sans-serif','Roboto, Arial, sans-serif','Verdana, sans-serif','Trebuchet MS, sans-serif','Georgia, serif','Times New Roman, serif','Courier New, monospace'];
+  const targetH = Math.max(8, height);
+  const targetW = Math.max(8, width);
+  let bestFamily = 'Arial, sans-serif', bestSize = Math.max(8, Math.round(targetH)), bestSpacing = 0, bestScore = Infinity;
 
-  let fontFamily = 'Arial, sans-serif';
-  let letterSpacing = 0;
   if (sampleText && ctx && typeof ctx.measureText === 'function') {
-    const target = Math.max(1, width);
-    let best = Infinity;
     for (const family of candidates) {
       ctx.save();
-      ctx.font = `${bold ? '700 ' : '400 '}${fontSize}px ${family}`;
+      ctx.font = `${bold ? '700 ' : '400 '}100px ${family}`;
+      const probe = ctx.measureText(sampleText);
+      const glyphH = Math.max(1, (probe.actualBoundingBoxAscent || 75) + (probe.actualBoundingBoxDescent || 20));
+      const size = Math.max(8, Math.min(180, 100 * targetH / glyphH));
+      ctx.font = `${bold ? '700 ' : '400 '}${size}px ${family}`;
       const measured = Math.max(1, ctx.measureText(sampleText).width);
       ctx.restore();
-      const ratioError = Math.abs(Math.log(measured / target));
-      if (ratioError < best) {
-        best = ratioError;
-        fontFamily = family;
-        // Preserve the source text's horizontal character spacing.
-        const natural = measured / Math.max(1, sampleText.length);
-        letterSpacing = Math.max(-0.5, Math.min(3, (target - measured) / Math.max(1, sampleText.length)));
-      }
+      const score = Math.abs(Math.log(measured / targetW));
+      if (score < bestScore) { bestScore = score; bestFamily = family; bestSize = size; }
     }
+    ctx.save();
+    ctx.font = `${bold ? '700 ' : '400 '}${bestSize}px ${bestFamily}`;
+    const measured = Math.max(1, ctx.measureText(sampleText).width);
+    ctx.restore();
+    bestSpacing = Math.max(-0.5, Math.min(2.5, (targetW - measured) / Math.max(1, sampleText.length)));
   }
-
-  return { fontSize, fontFamily, bold, italic: false, letterSpacing };
+  return { fontSize: Math.round(bestSize), fontFamily: bestFamily, bold, italic: false, letterSpacing: bestSpacing };
 }
+
 async function loadImageFile(file) {
   state.originalPdfBytes = null;
   state.fileName = file.name;
