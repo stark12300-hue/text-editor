@@ -1359,6 +1359,35 @@ $('zoomFitBtn').onclick = () => {
 $('undoBtn').onclick = undo;
 $('redoBtn').onclick = redo;
 
+// About Modal Dialog Controls
+function openAboutModal() {
+  const modal = $('aboutModal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeAboutModal() {
+  const modal = $('aboutModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+if ($('aboutBtn')) $('aboutBtn').onclick = openAboutModal;
+if ($('headerAboutBtn')) $('headerAboutBtn').onclick = openAboutModal;
+if ($('closeAboutModalBtn')) $('closeAboutModalBtn').onclick = closeAboutModal;
+if ($('closeAboutModalBtn2')) $('closeAboutModalBtn2').onclick = closeAboutModal;
+
+const aboutModalEl = $('aboutModal');
+if (aboutModalEl) {
+  aboutModalEl.addEventListener('click', (e) => {
+    if (e.target === aboutModalEl) closeAboutModal();
+  });
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeAboutModal();
+  }
+});
+
 // Rendering system
 function renderAll() {
   renderHeaderInfo();

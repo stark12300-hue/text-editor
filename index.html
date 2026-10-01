@@ -106,6 +106,11 @@
         <button id="exportPdfBtn" class="btn btn-primary" disabled title="Export as PDF document">
           Export PDF
         </button>
+
+        <button id="headerAboutBtn" class="btn btn-secondary" title="About &amp; Developer Info" style="height: 32px; padding: 0 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+          <span>About</span>
+        </button>
       </div>
     </header>
 
@@ -146,6 +151,21 @@
             <div style="display: flex; gap: 6px; margin-top: 6px;">
               <button id="undoBtn" class="btn btn-secondary" style="flex: 1; font-size: 11px;" disabled title="Undo (Ctrl+Z)">Undo</button>
               <button id="redoBtn" class="btn btn-secondary" style="flex: 1; font-size: 11px;" disabled title="Redo (Ctrl+Y)">Redo</button>
+            </div>
+          </div>
+
+          <!-- About Section in Side Panel -->
+          <div class="sidebar-section" style="padding-top: 14px; border-top: 1px solid var(--border-subtle); margin-top: 10px;">
+            <button id="aboutBtn" class="btn btn-secondary" style="width: 100%; height: 34px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 7px;" title="About Pdf Bapu &amp; Developer Info">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+              <span>About Pdf Bapu</span>
+            </button>
+            <div style="text-align: center; margin-top: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.4;">
+              Developed by <strong style="color: var(--text-secondary); font-weight: 600;">Abhay Singh</strong>
             </div>
           </div>
         </div>
@@ -292,6 +312,99 @@
       <div class="scan-spinner"></div>
       <span id="scanStatusText">Auto-scanning document to detect text fields…</span>
       <span id="scanPercent" class="tabular-nums" style="font-weight: 700; color: #a5b4fc;">0%</span>
+    </div>
+
+    <!-- About Modal Dialog -->
+    <div id="aboutModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="brand-icon" style="width: 32px; height: 32px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M5 4.5C5 3.39543 5.89543 2.5 7 2.5H14L19 7.5V19.5C19 20.6046 18.1046 21.5 17 21.5H7C5.89543 21.5 5 20.6046 5 19.5V4.5Z" fill="#ffffff" fill-opacity="0.96"/>
+                <path d="M14 2.5V6.5C14 7.05228 14.4477 7.5 15 7.5H19L14 2.5Z" fill="#818cf8"/>
+                <path d="M8 10.5H13" stroke="#4f46e5" stroke-width="1.8" stroke-linecap="round"/>
+                <path d="M8 14H11.5" stroke="#4f46e5" stroke-width="1.8" stroke-linecap="round"/>
+                <path d="M15 13L17.5 15.5L14.5 18.5L12 18L12.5 15.5L15 13Z" fill="#06b6d4" stroke="#0891b2" stroke-width="0.6"/>
+              </svg>
+            </div>
+            <div>
+              <h2 id="aboutTitle" class="modal-title">Pdf Bapu</h2>
+              <span class="modal-subtitle">Smart PDF &amp; Image Editor • v1.2</span>
+            </div>
+          </div>
+          <button id="closeAboutModalBtn" class="modal-close-btn" aria-label="Close About Dialog">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <!-- Developer Spotlight Card -->
+          <div class="about-dev-card">
+            <div class="about-dev-avatar">AS</div>
+            <div class="about-dev-info">
+              <div class="about-dev-badge">CREATOR &amp; LEAD DEVELOPER</div>
+              <div class="about-dev-name">Abhay Singh</div>
+              <p class="about-dev-role">Full-Stack Engineer &amp; Document Systems Architect</p>
+            </div>
+          </div>
+
+          <!-- Mission & Philosophy -->
+          <div class="about-section">
+            <h3 class="about-section-heading">Why Pdf Bapu?</h3>
+            <p class="about-text">
+              Pdf Bapu was built to provide a fast, privacy-focused online tool for modifying text in PDFs and images without subscriptions, watermarks, or quality degradation.
+            </p>
+            <p class="about-text" style="margin-top: 8px;">
+              All document processing runs <strong>100% locally in your web browser</strong>. Your documents, sensitive forms, and confidential files never leave your device.
+            </p>
+          </div>
+
+          <!-- Key Highlights Grid -->
+          <div class="about-highlights-grid">
+            <div class="highlight-item">
+              <div class="highlight-icon">🔒</div>
+              <div class="highlight-title">100% In-Browser Privacy</div>
+              <div class="highlight-desc">Processed in RAM memory. Zero cloud data storage or tracking.</div>
+            </div>
+            <div class="highlight-item">
+              <div class="highlight-icon">⚡</div>
+              <div class="highlight-title">Zero Quality Loss</div>
+              <div class="highlight-desc">Vector PDFs remain sharp vectors; images export in crisp 300 DPI clarity.</div>
+            </div>
+            <div class="highlight-item">
+              <div class="highlight-icon">🎯</div>
+              <div class="highlight-title">Point-and-Click Editing</div>
+              <div class="highlight-desc">Click directly on any text line or block to modify, erase, or restyle it.</div>
+            </div>
+            <div class="highlight-item">
+              <div class="highlight-icon">🧠</div>
+              <div class="highlight-title">Smart OCR Intelligence</div>
+              <div class="highlight-desc">Advanced OCR detects boxes and flowchart text without jumbling nearby labels.</div>
+            </div>
+          </div>
+
+          <!-- Shortcuts -->
+          <div class="about-section">
+            <h3 class="about-section-heading">Keyboard Shortcuts</h3>
+            <div class="shortcuts-row">
+              <span class="shortcut-chip"><kbd>Ctrl</kbd>+<kbd>Z</kbd> Undo</span>
+              <span class="shortcut-chip"><kbd>Ctrl</kbd>+<kbd>Y</kbd> Redo</span>
+              <span class="shortcut-chip"><kbd>Space</kbd>+Drag Pan</span>
+              <span class="shortcut-chip"><kbd>Del</kbd> Delete Text</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <div style="font-size: 11.5px; color: var(--text-muted);">
+            Crafted with ❤️ by <strong>Abhay Singh</strong> • Free for Everyone
+          </div>
+          <button id="closeAboutModalBtn2" class="btn btn-secondary" style="font-size: 12px; padding: 6px 16px;">
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 
