@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>TextForge — Image & PDF Text Editor</title>
+<meta name="description" content="Edit text overlays on images and PDFs directly in your browser.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+<header class="topbar"><div class="brand"><span class="brandMark">T</span><div><div class="brandName">TextForge</div><div class="brandSub">Image + PDF text editor</div></div></div><div class="statusPill"><span id="dot" class="dot"></span><span id="status">Upload an image or PDF to start.</span></div></header>
+<section class="workspace">
+<aside class="leftPanel">
+<button id="uploadBtn" class="primaryBtn">＋ Upload file</button><input id="fileInput" hidden type="file" accept="image/*,application/pdf">
+<button id="addTextBtn" class="toolBtn">T&nbsp; Add text</button>
+<button id="ocrBtn" class="toolBtn">◌&nbsp; Detect text (OCR)</button>
+<div class="sideSection"><div class="sideTitle">Document</div><div class="fileCard"><div id="fileIcon" class="fileIcon">—</div><div><strong id="fileName">Nothing uploaded</strong><span id="fileMeta">Choose an image or PDF</span></div></div></div>
+<div id="pagesSection" class="sideSection hidden"><div class="sideTitle">Pages</div><div id="pageGrid" class="pageGrid"></div></div>
+<div class="leftHint">OCR creates editable overlays. For clean replacement, use white/light backgrounds.</div>
+</aside>
+<section class="canvasPanel">
+<div class="canvasToolbar"><div class="modeTabs"><button id="imageTab" class="active">Image</button><button id="pdfTab">PDF</button></div><div><button id="exportBtn" class="exportBtn" disabled>Export PNG</button></div></div>
+<div class="stageWrap"><div id="stage" class="stage"><div id="emptyState" class="emptyState"><div class="emptyIcon">✦</div><h2>Edit text without leaving your browser</h2><p>Upload an image or PDF, then add text or use OCR to turn detected text into editable overlays.</p><button id="chooseBtn" class="secondaryBtn">Choose file</button></div></div></div>
+</section>
+<aside class="rightPanel"><div class="rightTitle">Text properties</div><div id="noSelection" class="noSelection"><div>↖</div><p>Select a text layer</p><span>or add a new one from the left.</span></div>
+<div id="properties" class="hidden"><label>Text<input id="textInput"></label><div class="twoCol"><label>Size<input id="sizeInput" type="number" min="8" max="200"></label><label>Color<div class="colorRow"><input id="colorInput" type="color"><span id="colorHex">#111827</span></div></label></div><button id="boldBtn" class="toggle">B&nbsp; Bold</button><button id="deleteBtn" class="dangerBtn">Delete text</button><div class="propertyHint">Drag selected text on the canvas to position it.</div></div></aside>
+</section><footer>TextForge processes files in your browser. Nothing is uploaded by this prototype.</footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js"></script>
+<script src="app.js"></script>
+</body></html>
