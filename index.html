@@ -59,26 +59,23 @@
   }
   </script>
 
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="apple-touch-icon" href="/logo.svg">
+  <meta property="og:image" content="https://ais-pre-c4dkfzqmvqjl3yfsk43epp-114019922693.asia-southeast1.run.app/logo.svg">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="app-shell">
     <!-- Top Navigation Header -->
     <header class="top-header">
-      <div class="brand-zone">
-        <div class="brand-icon" aria-label="Pdf Bapu Logo" title="Pdf Bapu — Smart PDF &amp; Image Editor">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M5 4.5C5 3.39543 5.89543 2.5 7 2.5H14L19 7.5V19.5C19 20.6046 18.1046 21.5 17 21.5H7C5.89543 21.5 5 20.6046 5 19.5V4.5Z" fill="#ffffff" fill-opacity="0.96"/>
-            <path d="M14 2.5V6.5C14 7.05228 14.4477 7.5 15 7.5H19L14 2.5Z" fill="#818cf8"/>
-            <path d="M8 10.5H13" stroke="#4f46e5" stroke-width="1.8" stroke-linecap="round"/>
-            <path d="M8 14H11.5" stroke="#4f46e5" stroke-width="1.8" stroke-linecap="round"/>
-            <path d="M15 13L17.5 15.5L14.5 18.5L12 18L12.5 15.5L15 13Z" fill="#06b6d4" stroke="#0891b2" stroke-width="0.6"/>
-            <circle cx="17.5" cy="13" r="1.2" fill="#fbbf24"/>
-          </svg>
-        </div>
-        <div>
-          <span class="brand-title">Pdf Bapu</span>
-          <span style="display: block; font-size: 10px; color: var(--text-muted); font-weight: 500; line-height: 1; margin-top: 2px;">Smart PDF &amp; Image Editor</span>
+      <div class="brand-zone" title="Pdf Bapu — Free Online PDF &amp; Image Editor">
+        <img src="/logo.svg" alt="Pdf Bapu Logo" class="brand-logo-img" width="36" height="36">
+        <div class="brand-text-group">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span class="brand-title">Pdf <span class="brand-title-accent">Bapu</span></span>
+            <span class="brand-badge">FREE</span>
+          </div>
+          <span class="brand-subtitle">Smart PDF &amp; Image Editor</span>
         </div>
       </div>
 
@@ -176,10 +173,10 @@
         <div id="canvasViewport" class="canvas-viewport">
           <!-- Empty State (Shown before file upload) -->
           <div id="emptyState" class="empty-state-card">
-            <div class="empty-state-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            <div class="empty-state-logo-wrap">
+              <img src="/logo.svg" alt="Pdf Bapu Logo" class="empty-state-logo-img" width="76" height="76">
             </div>
-            <div class="empty-state-title">Welcome to Pdf Bapu</div>
+            <div class="empty-state-title">Welcome to <span class="brand-title-accent">Pdf Bapu</span></div>
             <p class="empty-state-desc">
               Pdf Bapu lets you edit, replace, or add text on any PDF or image directly in your browser. Original document quality remains 100% crisp with zero file size increase.
             </p>
@@ -318,18 +315,10 @@
     <div id="aboutModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
       <div class="modal-card">
         <div class="modal-header">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <div class="brand-icon" style="width: 32px; height: 32px;">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M5 4.5C5 3.39543 5.89543 2.5 7 2.5H14L19 7.5V19.5C19 20.6046 18.1046 21.5 17 21.5H7C5.89543 21.5 5 20.6046 5 19.5V4.5Z" fill="#ffffff" fill-opacity="0.96"/>
-                <path d="M14 2.5V6.5C14 7.05228 14.4477 7.5 15 7.5H19L14 2.5Z" fill="#818cf8"/>
-                <path d="M8 10.5H13" stroke="#4f46e5" stroke-width="1.8" stroke-linecap="round"/>
-                <path d="M8 14H11.5" stroke="#4f46e5" stroke-width="1.8" stroke-linecap="round"/>
-                <path d="M15 13L17.5 15.5L14.5 18.5L12 18L12.5 15.5L15 13Z" fill="#06b6d4" stroke="#0891b2" stroke-width="0.6"/>
-              </svg>
-            </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <img src="/logo.svg" alt="Pdf Bapu Logo" width="38" height="38" style="border-radius: 10px; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);">
             <div>
-              <h2 id="aboutTitle" class="modal-title">Pdf Bapu</h2>
+              <h2 id="aboutTitle" class="modal-title">Pdf <span class="brand-title-accent">Bapu</span></h2>
               <span class="modal-subtitle">Smart PDF &amp; Image Editor • v1.2</span>
             </div>
           </div>

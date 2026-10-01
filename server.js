@@ -495,6 +495,11 @@ app.get('/sitemap.xml', (req, res) => {
   res.sendFile('sitemap.xml', { root: __dirname });
 });
 
+app.get(['/logo.svg', '/favicon.ico'], (req, res) => {
+  res.type('image/svg+xml');
+  res.sendFile('logo.svg', { root: __dirname });
+});
+
 app.get('*', (req, res) => {
   res.sendFile('index.html', { root: __dirname });
 });
