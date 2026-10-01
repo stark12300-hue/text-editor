@@ -1,32 +1,241 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>TextForge — Image & PDF Text Editor</title>
-<meta name="description" content="Edit text overlays on images and PDFs directly in your browser.">
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Pdf Bapu — Free Online PDF & Image Editor</title>
+  <meta name="description" content="Edit, replace, and add text in PDFs and images directly in your browser with zero quality loss, crisp 300 DPI clarity, and compact file size.">
+  <meta property="og:title" content="Pdf Bapu — Free Online PDF & Image Editor">
+  <meta property="og:description" content="Edit, replace, and add text in PDFs and images directly in your browser with zero quality loss, crisp 300 DPI clarity, and compact file size.">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="shell">
-<header class="topbar"><div class="brand"><span class="brandMark">T</span><div><div class="brandName">TextForge</div><div class="brandSub">Image + PDF text editor</div></div></div><div class="statusPill"><span id="dot" class="dot"></span><span id="status">Upload an image or PDF to start.</span></div></header>
-<section class="workspace">
-<aside class="leftPanel">
-<button id="uploadBtn" class="primaryBtn">＋ Upload file</button><input id="fileInput" hidden type="file" accept="image/*,application/pdf">
-<button id="addTextBtn" class="toolBtn">T&nbsp; Add text</button>
-<button id="ocrBtn" class="toolBtn">◌&nbsp; Detect text (OCR)</button>
-<div class="sideSection"><div class="sideTitle">Document</div><div class="fileCard"><div id="fileIcon" class="fileIcon">—</div><div><strong id="fileName">Nothing uploaded</strong><span id="fileMeta">Choose an image or PDF</span></div></div></div>
-<div id="pagesSection" class="sideSection hidden"><div class="sideTitle">Pages</div><div id="pageGrid" class="pageGrid"></div></div>
-<div class="leftHint">OCR creates editable overlays. For clean replacement, use white/light backgrounds.</div>
-</aside>
-<section class="canvasPanel">
-<div class="canvasToolbar"><div class="modeTabs"><button id="imageTab" class="active">Image</button><button id="pdfTab">PDF</button></div><div><button id="exportBtn" class="exportBtn" disabled>Export PNG</button></div></div>
-<div class="stageWrap"><div id="stage" class="stage"><div id="emptyState" class="emptyState"><div class="emptyIcon">✦</div><h2>Edit text without leaving your browser</h2><p>Upload an image or PDF, then add text or use OCR to turn detected text into editable overlays.</p><button id="chooseBtn" class="secondaryBtn">Choose file</button></div></div></div>
-</section>
-<aside class="rightPanel"><div class="rightTitle">Text properties</div><div id="noSelection" class="noSelection"><div>↖</div><p>Select a text layer</p><span>or add a new one from the left.</span></div>
-<div id="properties" class="hidden"><label>Text<input id="textInput"></label><div class="twoCol"><label>Size<input id="sizeInput" type="number" min="8" max="200"></label><label>Color<div class="colorRow"><input id="colorInput" type="color"><span id="colorHex">#111827</span></div></label></div><button id="boldBtn" class="toggle">B&nbsp; Bold</button><button id="deleteBtn" class="dangerBtn">Delete text</button><div class="propertyHint">Drag selected text on the canvas to position it.</div></div></aside>
-</section><footer>TextForge processes files in your browser. Nothing is uploaded by this prototype.</footer>
-</div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js"></script>
-<script src="app.js"></script>
-</body></html>
+  <div class="app-shell">
+    <!-- Top Navigation Header -->
+    <header class="top-header">
+      <div class="brand-zone">
+        <div class="brand-icon">PB</div>
+        <div>
+          <span class="brand-title">Pdf Bapu</span>
+          <span style="display: block; font-size: 10px; color: var(--text-muted); font-weight: 500; line-height: 1; margin-top: 2px;">Smart PDF &amp; Image Editor</span>
+        </div>
+      </div>
+
+      <div class="status-zone">
+        <div class="doc-info">
+          <span id="docName" class="doc-name">No document loaded</span>
+          <span aria-hidden="true">·</span>
+          <span id="docMeta" class="tabular-nums">0 × 0</span>
+        </div>
+        <span class="status-text">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusMsg">Ready</span>
+        </span>
+      </div>
+
+      <div class="actions-zone">
+        <button id="uploadBtn" class="btn btn-primary">
+          Upload File
+        </button>
+        <input id="fileInput" hidden type="file" accept="image/png,image/jpeg,image/jpg,image/webp,image/*,application/pdf,.pdf,.png,.jpg,.jpeg,.webp">
+
+        <button id="exportImageBtn" class="btn btn-secondary" disabled title="Export as PNG image">
+          Export PNG
+        </button>
+        <button id="exportPdfBtn" class="btn btn-primary" disabled title="Export as PDF document">
+          Export PDF
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="workspace-layout">
+      <!-- Left Panel: Simple & Clean Controls -->
+      <aside class="left-sidebar">
+        <div class="sidebar-content">
+          <!-- Primary Action: Add Text -->
+          <div class="sidebar-section">
+            <button id="addTextToolBtn" class="btn btn-primary" style="width: 100%; height: 38px; font-size: 13px; font-weight: 600;" disabled>
+              ＋ Add Text
+            </button>
+            <button id="scanOcrBtn" class="btn btn-secondary" style="width: 100%; height: 34px; font-size: 12px; margin-top: 8px;" disabled title="Scan document using OCR to detect and highlight all text fields">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              Scan &amp; Detect Text (OCR)
+            </button>
+          </div>
+
+          <!-- Document Pages Navigation (Shown for multi-page PDFs) -->
+          <div id="pagesSection" class="sidebar-section hidden" style="margin-top: 8px;">
+            <div class="sidebar-title">Pages (<span id="pageCountDisplay" class="tabular-nums">1</span>)</div>
+            <div id="pagesGrid" class="pages-grid"></div>
+          </div>
+
+          <!-- Zoom & History Controls -->
+          <div class="sidebar-section" style="margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border-subtle);">
+            <div class="sidebar-title">View &amp; History</div>
+            <div style="display: flex; gap: 6px; margin-top: 6px;">
+              <button id="zoomOutBtn" class="btn btn-secondary" style="flex: 1;" title="Zoom Out">−</button>
+              <span id="zoomLevel" class="tabular-nums" style="display: flex; align-items: center; justify-content: center; min-width: 50px; font-size: 12px; color: var(--text-secondary);">100%</span>
+              <button id="zoomInBtn" class="btn btn-secondary" style="flex: 1;" title="Zoom In">＋</button>
+            </div>
+            <div style="display: flex; gap: 6px; margin-top: 6px;">
+              <button id="zoomFitBtn" class="btn btn-secondary" style="flex: 1; font-size: 11px;">Fit View</button>
+              <button id="zoomResetBtn" class="btn btn-secondary" style="flex: 1; font-size: 11px;">100%</button>
+            </div>
+            <div style="display: flex; gap: 6px; margin-top: 6px;">
+              <button id="undoBtn" class="btn btn-secondary" style="flex: 1; font-size: 11px;" disabled title="Undo (Ctrl+Z)">Undo</button>
+              <button id="redoBtn" class="btn btn-secondary" style="flex: 1; font-size: 11px;" disabled title="Redo (Ctrl+Y)">Redo</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Center Document Canvas Viewport -->
+      <section class="center-panel">
+        <div id="canvasViewport" class="canvas-viewport">
+          <!-- Empty State (Shown before file upload) -->
+          <div id="emptyState" class="empty-state-card">
+            <div class="empty-state-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            </div>
+            <div class="empty-state-title">Welcome to Pdf Bapu</div>
+            <p class="empty-state-desc">
+              Edit, replace, or add text on any PDF or image directly in your browser. Original document quality remains 100% crisp with zero file size increase.
+            </p>
+            <div class="empty-state-actions">
+              <button id="emptyUploadBtn" class="btn btn-primary" style="padding: 10px 24px; font-size: 14px;">Choose Document</button>
+            </div>
+          </div>
+
+          <!-- Document Stage Wrapper -->
+          <div id="stageWrapper" class="document-stage-wrapper hidden"></div>
+        </div>
+      </section>
+
+      <!-- Right Panel: Text Properties -->
+      <aside class="right-sidebar">
+        <div class="inspector-header">
+          <span class="inspector-title">Text Properties</span>
+        </div>
+
+        <div class="inspector-body">
+          <!-- No Selection State -->
+          <div id="noSelectionState" class="inspector-empty">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"></path></svg>
+            <div style="font-weight: 600; color: var(--text-secondary); font-size: 13px;">No text selected</div>
+            <p style="font-size: 11px; max-width: 200px; line-height: 1.5; color: var(--text-muted);">
+              Click on any text in the document to edit it, or click "+ Add Text" to add new text.
+            </p>
+          </div>
+
+          <!-- Active Selection Properties -->
+          <div id="selectionProperties" class="hidden" style="display: flex; flex-direction: column; gap: 14px;">
+            <!-- Text Content -->
+            <div class="prop-field">
+              <label class="prop-label" for="propTextInput">
+                <span>Text Content</span>
+              </label>
+              <textarea id="propTextInput" class="prop-textarea" placeholder="Type text here…"></textarea>
+            </div>
+
+            <!-- Font Family & Weight -->
+            <div class="prop-field">
+              <label class="prop-label" for="propFontFamily">Font Family</label>
+              <select id="propFontFamily" class="prop-input" style="cursor: pointer;">
+                <option value="Arial, sans-serif">Arial (Modern Sans)</option>
+                <option value="'Times New Roman', serif">Times New Roman (Classic Serif)</option>
+                <option value="Georgia, serif">Georgia (Editorial Serif)</option>
+                <option value="'Courier New', monospace">Courier New (Monospace)</option>
+                <option value="'Trebuchet MS', sans-serif">Trebuchet MS (Clean Sans)</option>
+              </select>
+            </div>
+
+            <!-- Font Size & Weight Row -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+              <div class="prop-field">
+                <label class="prop-label" for="propFontSize">
+                  <span>Size</span>
+                  <span id="fontSizeDisplay" class="tabular-nums" style="font-size: 11px; color: var(--text-muted);">24px</span>
+                </label>
+                <input id="propFontSize" class="prop-input tabular-nums" type="number" min="8" max="200" value="24">
+              </div>
+              <div class="prop-field">
+                <label class="prop-label" for="propFontWeight">Weight</label>
+                <select id="propFontWeight" class="prop-input" style="cursor: pointer;">
+                  <option value="400">Regular (400)</option>
+                  <option value="500">Medium (500)</option>
+                  <option value="600">Semi-Bold (600)</option>
+                  <option value="700">Bold (700)</option>
+                  <option value="800">Extra Bold (800)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Formatting: Bold & Italic -->
+            <div class="prop-field">
+              <label class="prop-label">Style Toggle</label>
+              <div style="display: flex; gap: 8px;">
+                <button id="toggleBoldBtn" class="btn btn-secondary" style="flex: 1; font-weight: 700;">B &nbsp; Bold</button>
+                <button id="toggleItalicBtn" class="btn btn-secondary" style="flex: 1; font-style: italic;">I &nbsp; Italic</button>
+              </div>
+            </div>
+
+            <!-- Text Color -->
+            <div class="prop-field">
+              <label class="prop-label">Text Color</label>
+              <div class="color-picker-row">
+                <input id="propTextColor" type="color" class="color-input-custom" value="#0f172a">
+                <span id="textColorHex" class="color-hex-label">#0F172A</span>
+              </div>
+              <div class="color-presets">
+                <button class="color-preset-dot" style="background: #0f172a;" data-color="#0f172a" title="Dark Slate"></button>
+                <button class="color-preset-dot" style="background: #ffffff;" data-color="#ffffff" title="White"></button>
+                <button class="color-preset-dot" style="background: #475569;" data-color="#475569" title="Gray"></button>
+                <button class="color-preset-dot" style="background: #ef4444;" data-color="#ef4444" title="Red"></button>
+                <button class="color-preset-dot" style="background: #2563eb;" data-color="#2563eb" title="Blue"></button>
+                <button class="color-preset-dot" style="background: #10b981;" data-color="#10b981" title="Green"></button>
+              </div>
+            </div>
+
+            <!-- Background Cover / Erase Color -->
+            <div class="prop-field">
+              <label class="prop-label">
+                <span>Background Box (Cover Old Text)</span>
+              </label>
+              <div class="color-picker-row">
+                <input id="propBgColor" type="color" class="color-input-custom" value="#ffffff">
+                <span id="bgColorHex" class="color-hex-label">#FFFFFF</span>
+                <span style="font-size: 10px; color: var(--text-muted); margin-left: auto;">Erases original text</span>
+              </div>
+              <div class="color-presets">
+                <button class="color-preset-dot bg-preset" style="background: #ffffff;" data-bg="#ffffff" title="White"></button>
+                <button class="color-preset-dot bg-preset" style="background: #f1f5f9;" data-bg="#f1f5f9" title="Light Gray"></button>
+                <button class="color-preset-dot bg-preset" style="background: #fdfcf7;" data-bg="#fdfcf7" title="Parchment"></button>
+                <button class="color-preset-dot bg-preset" style="background: #1e293b;" data-bg="#1e293b" title="Dark Header"></button>
+              </div>
+            </div>
+
+            <!-- Delete Button -->
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-subtle);">
+              <button id="deleteSelectedBtn" class="btn btn-danger" style="width: 100%;">
+                Delete Text
+              </button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- OCR Scanning Progress Banner -->
+    <div id="scanBanner" class="scan-banner hidden">
+      <div class="scan-spinner"></div>
+      <span id="scanStatusText">Auto-scanning document to detect text fields…</span>
+      <span id="scanPercent" class="tabular-nums" style="font-weight: 700; color: #a5b4fc;">0%</span>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js"></script>
+  <script src="app.js?v=3"></script>
+</body>
+</html>
