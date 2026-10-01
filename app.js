@@ -341,6 +341,52 @@ async function extractTextFromImageAi(dataUrl) {
   return [];
 }
 
+function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = '') {
+  const safeW = Math.max(1, Math.min(Math.round(width), ctx.canvas.width - Math.max(0, Math.round(x))));
+  const safeH = Math.max(1, Math.min(Math.round(height), ctx.canvas.height - Math.max(0, Math.round(y))));
+  let dark = 0, total = 0;
+  try {
+    const data = ctx.getImageData(Math.max(0, Math.round(x)), Math.max(0, Math.round(y)), safeW, safeH).data;
+    const m = /^#([0-9a-f]{6})$/i.exec(bgColor || '');
+    const br = m ? parseInt(m[1].slice(0,2),16) : 255;
+    const bgc = m ? parseInt(m[1].slice(2,4),16) : 255;
+    const bb = m ? parseInt(m[1].slice(4,6),16) : 255;
+    for (let i=0;i<data.length;i+=4) {
+      if (data[i+3] < 100) continue;
+      total++;
+      if (Math.abs(data[i]-br)+Math.abs(data[i+1]-bgc)+Math.abs(data[i+2]-bb) > 90) dark++;
+    }
+  } catch (_) {}
+  const density = total ? dark / total : 0;
+  const bold = density > 0.20 || (width / Math.max(height,1) < 7 && density > 0.14);
+
+  const candidates = ['Arial, sans-serif','Helvetica, Arial, sans-serif','Segoe UI, Arial, sans-serif','Roboto, Arial, sans-serif','Verdana, sans-serif','Trebuchet MS, sans-serif','Georgia, serif','Times New Roman, serif','Courier New, monospace'];
+  const targetH = Math.max(8, height);
+  const targetW = Math.max(8, width);
+  let bestFamily = 'Arial, sans-serif', bestSize = Math.max(8, Math.round(targetH)), bestSpacing = 0, bestScore = Infinity;
+
+  if (sampleText && ctx && typeof ctx.measureText === 'function') {
+    for (const family of candidates) {
+      ctx.save();
+      ctx.font = `${bold ? '700 ' : '400 '}100px ${family}`;
+      const probe = ctx.measureText(sampleText);
+      const glyphH = Math.max(1, (probe.actualBoundingBoxAscent || 75) + (probe.actualBoundingBoxDescent || 20));
+      const size = Math.max(8, Math.min(180, 100 * targetH / glyphH));
+      ctx.font = `${bold ? '700 ' : '400 '}${size}px ${family}`;
+      const measured = Math.max(1, ctx.measureText(sampleText).width);
+      ctx.restore();
+      const score = Math.abs(Math.log(measured / targetW));
+      if (score < bestScore) { bestScore = score; bestFamily = family; bestSize = size; }
+    }
+    ctx.save();
+    ctx.font = `${bold ? '700 ' : '400 '}${bestSize}px ${bestFamily}`;
+    const measured = Math.max(1, ctx.measureText(sampleText).width);
+    ctx.restore();
+    bestSpacing = Math.max(-0.5, Math.min(2.5, (targetW - measured) / Math.max(1, sampleText.length)));
+  }
+  return { fontSize: Math.round(bestSize), fontFamily: bestFamily, bold, italic: false, letterSpacing: bestSpacing };
+}
+
 async function loadImageFile(file) {
   state.originalPdfBytes = null;
   state.fileName = file.name;
@@ -400,10 +446,11 @@ async function loadImageFile(file) {
         return;
       }
 
-      const fontSize = Math.max(10, Math.round(height * 0.82));
       const bgColor = sampleBackground(ctx, x, y, width, height);
       const textColor = item.text_color || getExactTextColorFromCanvas(ctx, x, y, width, height, bgColor);
-      const bold = !!item.is_bold || isInkBoxBold(ctx, x, y, width, height, bgColor);
+      const visualStyle = estimateImageTextStyle(ctx, x, y, width, height, bgColor, item.text);
+      const fontSize = visualStyle.fontSize;
+      const bold = !!item.is_bold || visualStyle.bold;
 
       extractedItems.push({
         id: item.blockId || uid(),
@@ -433,7 +480,90 @@ async function loadImageFile(file) {
     });
   }
 
-  // 1.5. If server OCR is unavailable, run local document segmentation
+  // 1.5. If server OCR is unavailable, use the same browser Tesseract OCR
+  // that powers the manual Scan OCR button. Document segmentation alone cannot
+  // recognize the actual words, so it must not be the primary fallback.
+  if (extractedItems.length === 0 && typeof Tesseract !== 'undefined') {
+    try {
+      const worker = await Tesseract.createWorker('eng', 1, {
+        logger: m => {
+          if (m.status === 'recognizing text' && scanPercent) {
+            scanPercent.textContent = `${Math.round(m.progress * 100)}%`;
+          }
+        }
+      });
+
+      const ocrCanvas = document.createElement('canvas');
+      // Upscale smaller images before OCR for better recognition.
+      const maxDim = Math.max(canvas.width, canvas.height);
+      const ocrScale = maxDim < 1600 ? Math.min(2, 1600 / maxDim) : 1;
+      ocrCanvas.width = Math.round(canvas.width * ocrScale);
+      ocrCanvas.height = Math.round(canvas.height * ocrScale);
+      const ocrCtx = ocrCanvas.getContext('2d');
+      ocrCtx.imageSmoothingEnabled = true;
+      ocrCtx.imageSmoothingQuality = 'high';
+      ocrCtx.drawImage(canvas, 0, 0, ocrCanvas.width, ocrCanvas.height);
+
+      const ocrResult = await worker.recognize(ocrCanvas, {}, { blocks: true });
+      await worker.terminate();
+
+      const ocrLines = [];
+      if (ocrResult.data?.blocks) {
+        for (const block of ocrResult.data.blocks) {
+          for (const para of (block.paragraphs || [])) {
+            for (const line of (para.lines || [])) {
+              if (line.text?.trim()) ocrLines.push(line);
+            }
+          }
+        }
+      } else if (ocrResult.data?.lines) {
+        ocrLines.push(...ocrResult.data.lines);
+      }
+
+      for (const line of ocrLines) {
+        const text = line.text?.trim();
+        const conf = line.confidence;
+        const bbox = line.bbox;
+        if (!text || !bbox || (conf !== undefined && conf < 20)) continue;
+
+        const x = Math.max(0, Math.round(bbox.x0 / ocrScale));
+        const y = Math.max(0, Math.round(bbox.y0 / ocrScale));
+        const width = Math.max(12, Math.round((bbox.x1 - bbox.x0) / ocrScale));
+        const height = Math.max(10, Math.round((bbox.y1 - bbox.y0) / ocrScale));
+        if (width < 8 || height < 6) continue;
+
+        const bgColor = sampleBackground(ctx, x, y, width, height);
+        const textColor = getExactTextColorFromCanvas(ctx, x, y, width, height, bgColor);
+
+        extractedItems.push({
+          id: uid(),
+          text,
+          originalText: text,
+          x, y, width, height,
+          fontSize: Math.max(10, Math.round(height * 1.0)),
+          fontFamily: 'Arial, sans-serif',
+          pdfFontType: 'Helvetica',
+          color: textColor,
+          bold: false,
+          italic: false,
+          bgColor: bgColor || '#ffffff',
+          pdfX: Math.round(x * 0.75),
+          pdfY: Math.round((canvas.height - y - height) * 0.75),
+          pdfWidth: Math.round(width * 0.75),
+          pdfHeight: Math.round(height * 0.75),
+          pdfFontSize: Math.round(height * 0.82 * 0.75),
+          pageNum: 1,
+          isEdited: false,
+          isAdded: false,
+          confidence: conf
+        });
+      }
+    } catch (ocrErr) {
+      console.warn('Browser OCR fallback notice:', ocrErr);
+    }
+  }
+
+  // Last fallback: detect approximate text regions for manual editing.
   if (extractedItems.length === 0) {
     const localBlocks = detectDocumentTextBlocks(ctx, canvas.width, canvas.height);
     extractedItems.push(...localBlocks);
@@ -920,20 +1050,21 @@ async function runOcrOnCurrentPage(autoTriggered = false) {
           } else {
             return;
           }
-          const fontSize = Math.max(12, Math.round(height * 0.82));
           const bgColor = sampleBackground(tempCtx, x, y, width, height);
           const textColor = item.text_color || getExactTextColorFromCanvas(tempCtx, x, y, width, height, bgColor);
+          const visualStyle = estimateImageTextStyle(tempCtx, x, y, width, height, bgColor, item.text);
+          const fontSize = visualStyle.fontSize;
 
           detectedItems.push({
             id: uid(),
             text: item.text,
             originalText: item.text,
             x, y, width, height, fontSize,
-            fontFamily: item.font_family || 'Arial, sans-serif',
+            fontFamily: item.font_family || visualStyle.fontFamily,
             pdfFontType: 'Helvetica',
             color: textColor,
-            bold: !!item.is_bold,
-            italic: false,
+            bold: !!item.is_bold || visualStyle.bold,
+            italic: visualStyle.italic,
             bgColor: bgColor || '#ffffff',
             pdfX: Math.round(x * 0.75),
             pdfY: Math.round((current.height - y - height) * 0.75),
@@ -982,7 +1113,7 @@ async function runOcrOnCurrentPage(autoTriggered = false) {
     })();
 
     const timeoutTask = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('OCR Timeout')), 10000)
+      setTimeout(() => reject(new Error('OCR Timeout')), 60000)
     );
 
     const result = await Promise.race([ocrTask, timeoutTask]);
@@ -1564,10 +1695,11 @@ function renderStage() {
     el.style.width = `${t.width * coordRatio}px`;
     el.style.height = `${t.height * coordRatio}px`;
     el.style.fontSize = `${t.fontSize * coordRatio}px`;
-    el.style.lineHeight = '1.05';
+    el.style.lineHeight = '1';
     el.style.fontFamily = t.fontFamily || 'Arial, sans-serif';
     el.style.fontWeight = t.bold ? '700' : '400';
     el.style.fontStyle = t.italic ? 'italic' : 'normal';
+    el.style.letterSpacing = `${t.letterSpacing || 0}px`;
 
     if (state.mode === 'image' && !isEdited) {
       el.style.color = 'transparent';
@@ -1852,6 +1984,7 @@ function activateDirectEditing(el, item) {
   el.style.fontFamily = item.fontFamily || 'Arial, sans-serif';
   el.style.fontWeight = item.bold ? '700' : '400';
   el.style.fontStyle = item.italic ? 'italic' : 'normal';
+  el.style.letterSpacing = `${item.letterSpacing || 0}px`;
 
   // If this was a detected block with generic placeholder, clear so typing replaces it seamlessly
   if ((item.text === 'Edit text' || item.text === 'Click to type') && !item.isEdited) {
