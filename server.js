@@ -485,6 +485,16 @@ app.post('/api/extract-text', async (req, res) => {
   }
 });
 
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain');
+  res.sendFile('robots.txt', { root: __dirname });
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  res.type('application/xml');
+  res.sendFile('sitemap.xml', { root: __dirname });
+});
+
 app.get('*', (req, res) => {
   res.sendFile('index.html', { root: __dirname });
 });

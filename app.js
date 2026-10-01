@@ -468,9 +468,9 @@ async function loadImageFile(file) {
   renderAll();
 
   if (extractedItems.length > 0) {
-    setStatus(`Ready! Detected ${extractedItems.length} text fields. Click any text directly to edit.`);
+    setStatus(`Ready (${extractedItems.length} text fields detected)`);
   } else {
-    setStatus('Ready. Click anywhere on the image or "+ Add Text" to edit!');
+    setStatus('Ready');
   }
 }
 
@@ -1369,17 +1369,29 @@ function renderAll() {
 
 function renderHeaderInfo() {
   const current = getCurrentPage();
-  $('docName').textContent = state.fileName || 'No document loaded';
+  const docNameEl = $('docName');
+  const docMetaEl = $('docMeta');
+  const divEl = $('docMetaDivider');
+
+  if (docNameEl) docNameEl.textContent = state.fileName || 'No document loaded';
   if (current) {
     const pw = current.ptWidth ? Math.round(current.ptWidth) : current.width;
     const ph = current.ptHeight ? Math.round(current.ptHeight) : current.height;
-    $('docMeta').textContent = `${pw} × ${ph} pt (${current.width} × ${current.height} px)`;
+    if (docMetaEl) {
+      docMetaEl.style.display = 'inline';
+      docMetaEl.textContent = `${pw} × ${ph} pt (${current.width} × ${current.height} px)`;
+    }
+    if (divEl) divEl.style.display = 'inline';
     $('addTextToolBtn').disabled = false;
     $('scanOcrBtn').disabled = false;
     $('exportImageBtn').disabled = false;
     $('exportPdfBtn').disabled = false;
   } else {
-    $('docMeta').textContent = '0 × 0';
+    if (docMetaEl) {
+      docMetaEl.style.display = 'none';
+      docMetaEl.textContent = '';
+    }
+    if (divEl) divEl.style.display = 'none';
     $('addTextToolBtn').disabled = true;
     $('scanOcrBtn').disabled = true;
     $('exportImageBtn').disabled = true;
@@ -2450,4 +2462,4 @@ function downloadFile(url, name) {
 
 // Initial start
 renderAll();
-setStatus('Ready. Upload a document or click Try Sample.');
+setStatus('Ready');
