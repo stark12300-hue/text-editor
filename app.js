@@ -433,7 +433,90 @@ async function loadImageFile(file) {
     });
   }
 
-  // 1.5. If server OCR is unavailable, run local document segmentation
+  // 1.5. If server OCR is unavailable, use the same browser Tesseract OCR
+  // that powers the manual Scan OCR button. Document segmentation alone cannot
+  // recognize the actual words, so it must not be the primary fallback.
+  if (extractedItems.length === 0 && typeof Tesseract !== 'undefined') {
+    try {
+      const worker = await Tesseract.createWorker('eng', 1, {
+        logger: m => {
+          if (m.status === 'recognizing text' && scanPercent) {
+            scanPercent.textContent = `${Math.round(m.progress * 100)}%`;
+          }
+        }
+      });
+
+      const ocrCanvas = document.createElement('canvas');
+      // Upscale smaller images before OCR for better recognition.
+      const maxDim = Math.max(canvas.width, canvas.height);
+      const ocrScale = maxDim < 1600 ? Math.min(2, 1600 / maxDim) : 1;
+      ocrCanvas.width = Math.round(canvas.width * ocrScale);
+      ocrCanvas.height = Math.round(canvas.height * ocrScale);
+      const ocrCtx = ocrCanvas.getContext('2d');
+      ocrCtx.imageSmoothingEnabled = true;
+      ocrCtx.imageSmoothingQuality = 'high';
+      ocrCtx.drawImage(canvas, 0, 0, ocrCanvas.width, ocrCanvas.height);
+
+      const ocrResult = await worker.recognize(ocrCanvas, {}, { blocks: true });
+      await worker.terminate();
+
+      const ocrLines = [];
+      if (ocrResult.data?.blocks) {
+        for (const block of ocrResult.data.blocks) {
+          for (const para of (block.paragraphs || [])) {
+            for (const line of (para.lines || [])) {
+              if (line.text?.trim()) ocrLines.push(line);
+            }
+          }
+        }
+      } else if (ocrResult.data?.lines) {
+        ocrLines.push(...ocrResult.data.lines);
+      }
+
+      for (const line of ocrLines) {
+        const text = line.text?.trim();
+        const conf = line.confidence;
+        const bbox = line.bbox;
+        if (!text || !bbox || (conf !== undefined && conf < 20)) continue;
+
+        const x = Math.max(0, Math.round(bbox.x0 / ocrScale));
+        const y = Math.max(0, Math.round(bbox.y0 / ocrScale));
+        const width = Math.max(12, Math.round((bbox.x1 - bbox.x0) / ocrScale));
+        const height = Math.max(10, Math.round((bbox.y1 - bbox.y0) / ocrScale));
+        if (width < 8 || height < 6) continue;
+
+        const bgColor = sampleBackground(ctx, x, y, width, height);
+        const textColor = getExactTextColorFromCanvas(ctx, x, y, width, height, bgColor);
+
+        extractedItems.push({
+          id: uid(),
+          text,
+          originalText: text,
+          x, y, width, height,
+          fontSize: Math.max(10, Math.round(height * 0.82)),
+          fontFamily: 'Arial, sans-serif',
+          pdfFontType: 'Helvetica',
+          color: textColor,
+          bold: false,
+          italic: false,
+          bgColor: bgColor || '#ffffff',
+          pdfX: Math.round(x * 0.75),
+          pdfY: Math.round((canvas.height - y - height) * 0.75),
+          pdfWidth: Math.round(width * 0.75),
+          pdfHeight: Math.round(height * 0.75),
+          pdfFontSize: Math.round(height * 0.82 * 0.75),
+          pageNum: 1,
+          isEdited: false,
+          isAdded: false,
+          confidence: conf
+        });
+      }
+    } catch (ocrErr) {
+      console.warn('Browser OCR fallback notice:', ocrErr);
+    }
+  }
+
+  // Last fallback: detect approximate text regions for manual editing.
   if (extractedItems.length === 0) {
     const localBlocks = detectDocumentTextBlocks(ctx, canvas.width, canvas.height);
     extractedItems.push(...localBlocks);
@@ -982,7 +1065,7 @@ async function runOcrOnCurrentPage(autoTriggered = false) {
     })();
 
     const timeoutTask = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('OCR Timeout')), 10000)
+      setTimeout(() => reject(new Error('OCR Timeout')), 60000)
     );
 
     const result = await Promise.race([ocrTask, timeoutTask]);
