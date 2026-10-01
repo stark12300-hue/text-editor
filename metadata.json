@@ -1,6 +1,6 @@
 {
   "name": "Pdf Bapu — Free Online PDF & Image Editor",
-  "description": "Edit, replace, and add text in PDFs and images directly in your browser with zero quality loss, crisp 300 DPI clarity, and compact file size.",
+  "description": "Pdf Bapu — Edit, replace, and add text in PDFs and images directly in your browser with zero quality loss, crisp 300 DPI clarity, and compact file size.",
   "capabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

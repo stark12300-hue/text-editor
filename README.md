@@ -1,6 +1,6 @@
-# TextForge — Image + PDF Text Editor
+# Pdf Bapu — Free Online PDF & Image Editor
 
-Static browser app for editing text overlays on images and PDFs.
+Pdf Bapu is a fast, free, in-browser tool for editing and replacing text in PDFs and images with zero quality degradation, crisp 300 DPI exports, and layout-aware OCR. Developed by Abhay Singh.
 
 ## Features
 - Upload PNG/JPG/WEBP or PDF

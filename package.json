@@ -1,6 +1,7 @@
 {
-  "name": "textforge",
-  "version": "1.0.0",
+  "name": "pdf-bapu",
+  "version": "1.2.0",
+  "description": "Pdf Bapu — Free Online PDF & Image Editor",
   "private": true,
   "type": "module",
   "scripts": {
