@@ -192,15 +192,8 @@ button, input, select, textarea {
   height: 7px;
   border-radius: 50%;
   background: var(--success);
-  box-shadow:
-    0 0 4px rgba(16, 185, 129, 0.9),
-    0 0 9px rgba(16, 185, 129, 0.65);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
   flex-shrink: 0;
-  animation: ready-dot-glow 1.8s ease-in-out infinite;
-}
-
-.status-dot.busy {
-  animation: pulse-dot 1.2s infinite ease-in-out;
 }
 
 .status-dot.busy {
@@ -215,21 +208,6 @@ button, input, select, textarea {
   font-size: 12px;
   letter-spacing: -0.01em;
   white-space: nowrap;
-}
-
-@keyframes ready-dot-glow {
-  0%, 100% {
-    opacity: 0.9;
-    box-shadow:
-      0 0 4px rgba(16, 185, 129, 0.9),
-      0 0 9px rgba(16, 185, 129, 0.65);
-  }
-  50% {
-    opacity: 1;
-    box-shadow:
-      0 0 5px rgba(16, 185, 129, 1),
-      0 0 13px rgba(16, 185, 129, 0.85);
-  }
 }
 
 @keyframes pulse-dot {
