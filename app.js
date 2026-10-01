@@ -2346,14 +2346,6 @@ $('exportPdfBtn').onclick = async () => {
   }
 };
 
-  } catch (err) {
-    console.error('PDF Export error:', err);
-    setStatus(err.message || 'Failed to export PDF.');
-  } finally {
-    setStatus('Ready');
-  }
-};
-
 function getDocumentBaseName() {
   return (state.fileName || 'document').replace(/\.[^/.]+$/, '');
 }
