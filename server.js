@@ -168,7 +168,7 @@ function clusterWordsIntoBlocks(words, scaleX, scaleY, origWidth, origHeight) {
     // If the horizontal gap between words is larger than a normal word space (1.35 * minH or ~26px),
     // they belong to DIFFERENT boxes or separate flowchart labels!
     const horizontalGap = word.bbox.x0 - prevWord.bbox.x1;
-    const maxWordGap = Math.max(8, Math.min(18, minH * 0.85));
+    const maxWordGap = Math.max(14, Math.min(30, minH * 1.35));
 
     if (isSameRow && horizontalGap >= -4 && horizontalGap <= maxWordGap) {
       // Check for repeated identical word loops (e.g. "dispatches dispatches dispatches...")
@@ -253,11 +253,7 @@ function clusterWordsIntoBlocks(words, scaleX, scaleY, origWidth, origHeight) {
 async function runTesseractOcrPipeline(imgBuffer, isFallback = false) {
   const { processedBuffer, scaleX, scaleY, origWidth, origHeight } = await preprocessImageForOcr(imgBuffer, isFallback);
   const worker = await getOcrWorker();
-  // Sparse-text mode is better for diagrams/flowcharts because it treats labels independently.
-  await worker.setParameters({
-    tessedit_pageseg_mode: '11',
-    preserve_interword_spaces: '1'
-  });
+  await worker.setParameters({ tessedit_pageseg_mode: '3' });
   const ocrResult = await worker.recognize(processedBuffer, {}, { blocks: true });
 
   const rawBlocks = [];
@@ -291,7 +287,7 @@ async function runTesseractOcrPipeline(imgBuffer, isFallback = false) {
             const prev = curBlock[curBlock.length - 1];
             const minH = Math.min(prev.bbox.y1 - prev.bbox.y0, w.bbox.y1 - w.bbox.y0);
             const gap = w.bbox.x0 - prev.bbox.x1;
-            const maxGap = Math.max(10, Math.round(minH * 0.85));
+            const maxGap = Math.max(20, Math.round(minH * 1.35));
 
             if (gap >= -4 && gap <= maxGap) {
               // Deduplicate consecutive repeated words ("dispatches dispatches...")
@@ -458,28 +454,28 @@ app.post('/api/extract-text', async (req, res) => {
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
     const imgBuffer = Buffer.from(cleanBase64, 'base64');
 
-    // Use Tesseract first for editable diagrams. Its OCR boxes are based on
-    // the actual pixels; Gemini can return oversized approximate boxes.
-    let items = await runTesseractOcrPipeline(imgBuffer, false);
-    console.log('[OCR] Tesseract primary result:', items.length, 'items');
+    // 1. Try Gemini Vision OCR first for diagrams/architecture with 5s timeout
+    let items = await tryGeminiOcr(imgBuffer);
+    console.log('[OCR] Gemini result:', items ? `${items.length} items` : 'null/fallback');
 
-    const avgConfidence = items.length
-      ? items.reduce((sum, it) => sum + (it.confidence || 0), 0) / items.length
-      : 0;
+    // 2. If Gemini unavailable or returned no items, use our layout-aware Tesseract word-clustering engine
+    if (!items || items.length === 0) {
+      items = await runTesseractOcrPipeline(imgBuffer, false);
+      console.log('[OCR] Tesseract primary result:', items.length, 'items');
 
-    if (items.length === 0 || avgConfidence < 45) {
-      console.log('[OCR] Running normalized fallback OCR strategy…');
-      const fallbackItems = await runTesseractOcrPipeline(imgBuffer, true);
-      if (fallbackItems.length >= items.length) {
-        items = fallbackItems;
-        console.log('[OCR] Fallback produced:', items.length, 'items');
+      // 3. Fallback strategy: If initial Tesseract pass had poor confidence or 0 items, run fallback pass
+      const avgConfidence = items.length
+        ? items.reduce((sum, it) => sum + (it.confidence || 0), 0) / items.length
+        : 0;
+
+      if (items.length === 0 || avgConfidence < 48) {
+        console.log('[OCR] Running fallback OCR strategy with adaptive thresholding…');
+        const fallbackItems = await runTesseractOcrPipeline(imgBuffer, true);
+        if (fallbackItems.length > items.length) {
+          items = fallbackItems;
+          console.log('[OCR] Fallback produced:', items.length, 'items');
+        }
       }
-    }
-
-    // Gemini is only a last resort when precise OCR finds nothing.
-    if (items.length === 0) {
-      items = await tryGeminiOcr(imgBuffer);
-      console.log('[OCR] Gemini last-resort result:', items ? String(items.length) + ' items' : 'null');
     }
 
     res.json({ success: true, items: items || [] });
@@ -508,13 +504,6 @@ app.get('*', (req, res) => {
   res.sendFile('index.html', { root: __dirname });
 });
 
-// Vercel runs this Express app as a serverless function.
-// Export the app so Vercel can manage the function lifecycle.
-// Keep the local listener only for normal Node.js development.
-export default app;
-
-if (!process.env.VERCEL) {
-  app.listen(PORT, HOST, () => {
-    console.log(`Pdf Bapu running at http://${HOST}:${PORT}`);
-  });
-}
+app.listen(PORT, HOST, () => {
+  console.log(`Pdf Bapu running at http://${HOST}:${PORT}`);
+});
