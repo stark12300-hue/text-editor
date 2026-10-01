@@ -366,7 +366,7 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor) {
   const bold = density > 0.20 || (width / Math.max(height, 1) < 7 && density > 0.14);
   return {
     // CSS uses the measured glyph height instead of a guessed fixed font size.
-    fontSize: Math.max(8, Math.round(height * 0.82)),
+    fontSize: Math.max(8, Math.round(height * 1.0)),
     fontFamily: 'Arial, sans-serif',
     bold,
     italic: false
@@ -526,7 +526,7 @@ async function loadImageFile(file) {
           text,
           originalText: text,
           x, y, width, height,
-          fontSize: Math.max(10, Math.round(height * 0.82)),
+          fontSize: Math.max(10, Math.round(height * 1.0)),
           fontFamily: 'Arial, sans-serif',
           pdfFontType: 'Helvetica',
           color: textColor,
@@ -1681,7 +1681,7 @@ function renderStage() {
     el.style.width = `${t.width * coordRatio}px`;
     el.style.height = `${t.height * coordRatio}px`;
     el.style.fontSize = `${t.fontSize * coordRatio}px`;
-    el.style.lineHeight = '1.05';
+    el.style.lineHeight = '1';
     el.style.fontFamily = t.fontFamily || 'Arial, sans-serif';
     el.style.fontWeight = t.bold ? '700' : '400';
     el.style.fontStyle = t.italic ? 'italic' : 'normal';
