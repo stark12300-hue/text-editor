@@ -345,19 +345,30 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
   const safeW = Math.max(1, Math.min(Math.round(width), ctx.canvas.width - Math.max(0, Math.round(x))));
   const safeH = Math.max(1, Math.min(Math.round(height), ctx.canvas.height - Math.max(0, Math.round(y))));
   let dark = 0, total = 0;
+  let inkMinX = safeW, inkMinY = safeH, inkMaxX = -1, inkMaxY = -1;
   try {
     const data = ctx.getImageData(Math.max(0, Math.round(x)), Math.max(0, Math.round(y)), safeW, safeH).data;
     const m = /^#([0-9a-f]{6})$/i.exec(bgColor || '');
     const br = m ? parseInt(m[1].slice(0,2),16) : 255;
     const bgc = m ? parseInt(m[1].slice(2,4),16) : 255;
     const bb = m ? parseInt(m[1].slice(4,6),16) : 255;
-    for (let i=0;i<data.length;i+=4) {
-      if (data[i+3] < 100) continue;
-      total++;
-      if (Math.abs(data[i]-br)+Math.abs(data[i+1]-bgc)+Math.abs(data[i+2]-bb) > 90) dark++;
+    for (let py=0; py<safeH; py++) {
+      for (let px=0; px<safeW; px++) {
+        const i = (py * safeW + px) * 4;
+        if (data[i+3] < 100) continue;
+        total++;
+        const contrast = Math.abs(data[i]-br)+Math.abs(data[i+1]-bgc)+Math.abs(data[i+2]-bb);
+        if (contrast > 90) {
+          dark++;
+          inkMinX = Math.min(inkMinX, px); inkMaxX = Math.max(inkMaxX, px);
+          inkMinY = Math.min(inkMinY, py); inkMaxY = Math.max(inkMaxY, py);
+        }
+      }
     }
   } catch (_) {}
   const density = total ? dark / total : 0;
+  const inkWidth = inkMaxX >= inkMinX ? (inkMaxX - inkMinX + 1) : safeW;
+  const inkHeight = inkMaxY >= inkMinY ? (inkMaxY - inkMinY + 1) : safeH;
   const bold = density > 0.20 || (width / Math.max(height,1) < 7 && density > 0.14);
 
   const candidates = ['Arial, sans-serif','Helvetica, Arial, sans-serif','Segoe UI, Arial, sans-serif','Roboto, Arial, sans-serif','Verdana, sans-serif','Trebuchet MS, sans-serif','Georgia, serif','Times New Roman, serif','Courier New, monospace'];
@@ -384,7 +395,15 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
     ctx.restore();
     bestSpacing = Math.max(-0.5, Math.min(2.5, (targetW - measured) / Math.max(1, sampleText.length)));
   }
-  return { fontSize: Math.round(bestSize), fontFamily: bestFamily, bold, italic: false, letterSpacing: bestSpacing };
+  return {
+    fontSize: Math.round(bestSize),
+    fontFamily: bestFamily,
+    bold,
+    italic: false,
+    letterSpacing: bestSpacing,
+    sourceInkWidth: inkWidth,
+    sourceInkHeight: inkHeight
+  };
 }
 
 async function loadImageFile(file) {
@@ -1591,6 +1610,21 @@ function renderPagesList() {
 }
 
 // Stage Rendering: Clean background image with perfectly non-overlapping text overlays
+function getImageReplacementScaleY(item) {
+  if (state.mode !== 'image' || !item?.sourceInkHeight || !item.text) return 1;
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.font = `${item.italic ? 'italic ' : ''}${item.bold ? '700 ' : '400 '}${item.fontSize}px ${item.fontFamily || 'Arial, sans-serif'}`;
+    const m = ctx.measureText(item.text);
+    const renderedInkHeight = Math.max(1, (m.actualBoundingBoxAscent || item.fontSize * 0.75) + (m.actualBoundingBoxDescent || item.fontSize * 0.2));
+    const scale = item.sourceInkHeight / renderedInkHeight;
+    return Math.max(0.8, Math.min(1.8, scale));
+  } catch (_) {
+    return 1;
+  }
+}
+
 function renderStage() {
   const emptyState = $('emptyState');
   const stageWrapper = $('stageWrapper');
@@ -1701,6 +1735,13 @@ function renderStage() {
     el.style.fontStyle = t.italic ? 'italic' : 'normal';
     el.style.padding = state.mode === 'image' ? '0' : '0 1px';
     el.style.letterSpacing = state.mode === 'image' ? `${t.letterSpacing || 0}px` : '0px';
+    if (state.mode === 'image' && isEdited) {
+      const sy = getImageReplacementScaleY(t);
+      el.style.transformOrigin = 'left top';
+      el.style.transform = `scaleY(${sy})`;
+    } else {
+      el.style.transform = 'none';
+    }
 
     if (state.mode === 'image' && !isEdited) {
       el.style.color = 'transparent';
