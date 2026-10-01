@@ -375,32 +375,12 @@ async function loadImageFile(file) {
   const originalDataUrl = canvas.toDataURL('image/png');
   URL.revokeObjectURL(url);
 
-  let compressedBase64 = originalDataUrl;
-  let sentWidth = canvas.width;
-  let sentHeight = canvas.height;
-
-  if (canvas.width > 1600 || canvas.height > 1600) {
-    const scale = Math.min(1.0, 1600 / Math.max(canvas.width, canvas.height));
-    const compCanvas = document.createElement('canvas');
-    compCanvas.width = Math.round(canvas.width * scale);
-    compCanvas.height = Math.round(canvas.height * scale);
-    sentWidth = compCanvas.width;
-    sentHeight = compCanvas.height;
-    const compCtx = compCanvas.getContext('2d');
-    compCtx.drawImage(canvas, 0, 0, compCanvas.width, compCanvas.height);
-    compressedBase64 = compCanvas.toDataURL('image/jpeg', 0.85);
-  } else {
-    compressedBase64 = canvas.toDataURL('image/jpeg', 0.88);
-  }
-
-  // 1. Detect all text fields using high-speed server OCR
-  const rawAiItems = await extractTextFromImageAi(compressedBase64);
+  // 1. Detect all text fields using high-precision layout-aware server OCR
+  // The server handles intelligent orientation, contrast normalization, and scaling
+  const rawAiItems = await extractTextFromImageAi(originalDataUrl);
   const extractedItems = [];
 
   if (rawAiItems && rawAiItems.length > 0) {
-    const scaleX = canvas.width / sentWidth;
-    const scaleY = canvas.height / sentHeight;
-
     rawAiItems.forEach(item => {
       if (!item.text || !item.text.trim()) return;
 
@@ -409,25 +389,24 @@ async function loadImageFile(file) {
         const [ymin, xmin, ymax, xmax] = item.box_2d;
         x = Math.max(0, Math.round((xmin / 1000) * canvas.width));
         y = Math.max(0, Math.round((ymin / 1000) * canvas.height));
-        width = Math.max(14, Math.round(((xmax - xmin) / 1000) * canvas.width));
-        height = Math.max(12, Math.round(((ymax - ymin) / 1000) * canvas.height));
+        width = Math.max(12, Math.round(((xmax - xmin) / 1000) * canvas.width));
+        height = Math.max(10, Math.round(((ymax - ymin) / 1000) * canvas.height));
       } else if (item.x !== undefined && item.y !== undefined) {
-        x = Math.max(0, Math.round(item.x * scaleX));
-        y = Math.max(0, Math.round(item.y * scaleY));
-        width = Math.max(14, Math.round((item.width || 50) * scaleX));
-        height = Math.max(12, Math.round((item.height || 18) * scaleY));
+        x = Math.max(0, Math.round(item.x));
+        y = Math.max(0, Math.round(item.y));
+        width = Math.max(12, Math.round(item.width || 40));
+        height = Math.max(10, Math.round(item.height || 16));
       } else {
         return;
       }
 
-      const fontSize = Math.max(12, Math.round(height * 0.82));
+      const fontSize = Math.max(10, Math.round(height * 0.82));
       const bgColor = sampleBackground(ctx, x, y, width, height);
       const textColor = item.text_color || getExactTextColorFromCanvas(ctx, x, y, width, height, bgColor);
-
       const bold = !!item.is_bold || isInkBoxBold(ctx, x, y, width, height, bgColor);
 
       extractedItems.push({
-        id: uid(),
+        id: item.blockId || uid(),
         text: item.text,
         originalText: item.text,
         x,
@@ -448,7 +427,8 @@ async function loadImageFile(file) {
         pdfFontSize: Math.round(fontSize * 0.75),
         pageNum: 1,
         isEdited: false,
-        isAdded: false
+        isAdded: false,
+        confidence: item.confidence
       });
     });
   }
@@ -459,24 +439,17 @@ async function loadImageFile(file) {
     extractedItems.push(...localBlocks);
   }
 
-  // 2. INK-AWARE PIXEL ERASURE: "background gayab kar diya"
-  // Surgically removes all original text ink from the canvas background
-  if (extractedItems.length > 0) {
-    eraseTextPixelsPrecisely(ctx, extractedItems);
-  }
-
-  // 3. "iske jaisa same text upar bana diya"
-  // Each extracted item has the exact same text and exact coordinates rendered cleanly on top!
-
-  const erasedDataUrl = canvas.toDataURL('image/png');
+  // The original image PNG/JPEG remains 100% visually UNCHANGED!
+  // Preprocessing was used only for OCR on the server.
+  // OCR creates an interactive editable text layer directly on top of the original image.
 
   if (scanBanner) scanBanner.classList.add('hidden');
 
   state.mode = 'image';
   state.pages = [{
     pageNumber: 1,
-    thumbDataUrl: originalDataUrl, // Crisp thumbnail with all original text visible
-    dataUrl: erasedDataUrl, // Clean background with ink erased, ready for transparent overlays
+    thumbDataUrl: originalDataUrl,
+    dataUrl: originalDataUrl, // Pristine, uncompressed original image
     width: canvas.width,
     height: canvas.height,
     ptWidth: Math.round(canvas.width * 0.75),
@@ -1540,27 +1513,34 @@ function renderStage() {
     }
 
     const el = document.createElement('div');
-    el.className = `text-overlay ${t.id === state.selectedId ? 'selected' : ''}`;
+    el.className = `text-overlay ${t.id === state.selectedId ? 'selected' : ''} ${isEdited ? 'edited' : ''}`;
     el.id = `layer-${t.id}`;
     el.textContent = t.text;
-    el.title = 'Click to edit text';
+    el.title = `${t.text} (${Math.round(t.width)}×${Math.round(t.height)}) — Click to select and edit`;
 
     el.style.left = `${t.x * coordRatio}px`;
     el.style.top = `${t.y * coordRatio}px`;
-    el.style.fontSize = `${t.fontSize * coordRatio}px`;
+    el.style.width = `${t.width * coordRatio}px`;
     el.style.height = `${t.height * coordRatio}px`;
+    el.style.fontSize = `${t.fontSize * coordRatio}px`;
     el.style.lineHeight = '1.05';
     el.style.fontFamily = t.fontFamily || 'Arial, sans-serif';
     el.style.fontWeight = t.bold ? '700' : '400';
     el.style.fontStyle = t.italic ? 'italic' : 'normal';
-    el.style.color = t.color || '#000000';
-    el.style.opacity = '1';
-    el.style.backgroundColor = isEdited ? (t.bgColor || '#ffffff') : 'transparent';
+
+    if (state.mode === 'image' && !isEdited) {
+      el.style.color = 'transparent';
+      el.style.backgroundColor = 'transparent';
+    } else {
+      el.style.color = t.color || '#000000';
+      el.style.backgroundColor = isEdited ? (t.bgColor || '#ffffff') : 'transparent';
+    }
     el.style.zIndex = '10';
 
-    // SINGLE CLICK ACTIVATES DIRECT EDITING!
+    // Clicking a detected text region selects only that text region
     el.onclick = e => {
       e.stopPropagation();
+      selectItem(t.id);
       activateDirectEditing(el, t);
     };
 
@@ -1796,6 +1776,20 @@ function addTextAtCoordinates(x, y) {
   const newEl = $(`layer-${newItem.id}`);
   if (newEl) {
     activateDirectEditing(newEl, newItem);
+  }
+}
+
+// Select a specific detected text item region
+function selectItem(id) {
+  state.selectedId = id;
+  const current = getCurrentPage();
+  const item = current ? current.items.find(x => x.id === id) : null;
+  document.querySelectorAll('.text-overlay').forEach(node => {
+    node.classList.toggle('selected', node.id === `layer-${id}`);
+  });
+  renderProperties();
+  if (item) {
+    setStatus(`Selected: "${item.text}" (${item.width}×${item.height} at X:${item.x}, Y:${item.y})`);
   }
 }
 
@@ -2166,9 +2160,10 @@ $('exportImageBtn').onclick = async () => {
     }
 
     current.items.forEach(t => {
-      if (t.text && t.text.trim()) {
+      const isEdited = (t.isEdited && t.text !== t.originalText) || t.isAdded;
+      if (isEdited && t.text && t.text.trim()) {
         ctx.save();
-        if (((t.isEdited && t.text !== t.originalText) || t.isAdded) && t.bgColor && t.bgColor !== 'transparent') {
+        if (t.bgColor && t.bgColor !== 'transparent') {
           ctx.fillStyle = t.bgColor;
           const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
           ctx.fillRect(Math.max(0, t.x - 2), Math.max(0, t.y - 2), origW + 4, t.height + 4);

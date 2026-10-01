@@ -581,41 +581,40 @@ button, input, select, textarea {
   image-rendering: auto;
 }
 
-/* Text Layer Overlays — Clean, crisp, visible */
+/* Text Layer Overlays — Interactive detected bounding boxes */
 .text-overlay {
   position: absolute;
   z-index: 10;
-  cursor: text;
+  cursor: pointer;
   white-space: pre;
   line-height: 1.05;
   padding: 0 1px;
   margin: 0;
-  border: 1px dashed rgba(99, 102, 241, 0.35);
+  border: 1px dashed rgba(99, 102, 241, 0.4);
   border-radius: 2px;
   box-sizing: border-box;
-  color: #000000;
   background-color: transparent;
-  transition: all 0.1s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .text-overlay:hover {
-  border-color: rgba(99, 102, 241, 0.9) !important;
+  border-color: rgba(99, 102, 241, 0.95) !important;
   background-color: rgba(99, 102, 241, 0.12) !important;
 }
 
 .text-overlay.selected {
-  border: 1.5px solid var(--accent) !important;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.35);
+  border: 2px solid #2563eb !important;
+  background-color: rgba(37, 99, 235, 0.14) !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
   z-index: 30;
 }
 
 .text-overlay.edited {
-  border-color: rgba(16, 185, 129, 0.6);
-  background-color: transparent;
+  border-color: rgba(16, 185, 129, 0.6) !important;
 }
 
 .text-overlay.editing {
-  border: 1.5px solid #2563eb !important;
+  border: 2px solid #2563eb !important;
   background-color: #ffffff !important;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25) !important;
   z-index: 50;
