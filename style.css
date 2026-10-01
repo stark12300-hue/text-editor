@@ -647,7 +647,7 @@ button, input, select, textarea {
   cursor: pointer;
   white-space: pre;
   line-height: 1.05;
-  padding: 0;
+  padding: 0 1px;
   margin: 0;
   border: 1px dashed rgba(99, 102, 241, 0.4);
   border-radius: 2px;
