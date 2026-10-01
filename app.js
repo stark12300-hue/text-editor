@@ -341,38 +341,64 @@ async function extractTextFromImageAi(dataUrl) {
   return [];
 }
 
-function estimateImageTextStyle(ctx, x, y, width, height, bgColor) {
-  // PNG/JPEG files have no font metadata. Estimate visual weight from the
-  // detected glyph pixels and keep the detected pixel height as the source of truth.
+function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = '') {
+  // Raster images contain no font metadata. Match the OCR box against common
+  // browser fonts so replacements retain the closest visual family and width.
   const safeW = Math.max(1, Math.min(Math.round(width), ctx.canvas.width - Math.max(0, Math.round(x))));
   const safeH = Math.max(1, Math.min(Math.round(height), ctx.canvas.height - Math.max(0, Math.round(y))));
-  let dark = 0;
-  let total = 0;
+  let dark = 0, total = 0;
   try {
     const data = ctx.getImageData(Math.max(0, Math.round(x)), Math.max(0, Math.round(y)), safeW, safeH).data;
-    const bg = bgColor || '#ffffff';
-    const m = /^#([0-9a-f]{6})$/i.exec(bg);
+    const m = /^#([0-9a-f]{6})$/i.exec(bgColor || '');
     const br = m ? parseInt(m[1].slice(0,2),16) : 255;
     const bgc = m ? parseInt(m[1].slice(2,4),16) : 255;
     const bb = m ? parseInt(m[1].slice(4,6),16) : 255;
-    for (let i = 0; i < data.length; i += 4) {
-      if (data[i + 3] < 100) continue;
+    for (let i=0;i<data.length;i+=4) {
+      if (data[i+3] < 100) continue;
       total++;
-      const contrast = Math.abs(data[i] - br) + Math.abs(data[i+1] - bgc) + Math.abs(data[i+2] - bb);
-      if (contrast > 90) dark++;
+      if (Math.abs(data[i]-br)+Math.abs(data[i+1]-bgc)+Math.abs(data[i+2]-bb) > 90) dark++;
     }
   } catch (_) {}
-  const density = total ? dark / total : 0;
-  const bold = density > 0.20 || (width / Math.max(height, 1) < 7 && density > 0.14);
-  return {
-    // CSS uses the measured glyph height instead of a guessed fixed font size.
-    fontSize: Math.max(8, Math.round(height * 1.0)),
-    fontFamily: 'Arial, sans-serif',
-    bold,
-    italic: false
-  };
-}
 
+  const density = total ? dark / total : 0;
+  const bold = density > 0.20 || (width / Math.max(height,1) < 7 && density > 0.14);
+  const fontSize = Math.max(8, Math.round(height * 0.92));
+
+  const candidates = [
+    'Arial, sans-serif',
+    'Helvetica, Arial, sans-serif',
+    'Segoe UI, Arial, sans-serif',
+    'Roboto, Arial, sans-serif',
+    'Verdana, sans-serif',
+    'Trebuchet MS, sans-serif',
+    'Georgia, serif',
+    'Times New Roman, serif',
+    'Courier New, monospace'
+  ];
+
+  let fontFamily = 'Arial, sans-serif';
+  let letterSpacing = 0;
+  if (sampleText && ctx && typeof ctx.measureText === 'function') {
+    const target = Math.max(1, width);
+    let best = Infinity;
+    for (const family of candidates) {
+      ctx.save();
+      ctx.font = `${bold ? '700 ' : '400 '}${fontSize}px ${family}`;
+      const measured = Math.max(1, ctx.measureText(sampleText).width);
+      ctx.restore();
+      const ratioError = Math.abs(Math.log(measured / target));
+      if (ratioError < best) {
+        best = ratioError;
+        fontFamily = family;
+        // Preserve the source text's horizontal character spacing.
+        const natural = measured / Math.max(1, sampleText.length);
+        letterSpacing = Math.max(-0.5, Math.min(3, (target - measured) / Math.max(1, sampleText.length)));
+      }
+    }
+  }
+
+  return { fontSize, fontFamily, bold, italic: false, letterSpacing };
+}
 async function loadImageFile(file) {
   state.originalPdfBytes = null;
   state.fileName = file.name;
@@ -434,7 +460,7 @@ async function loadImageFile(file) {
 
       const bgColor = sampleBackground(ctx, x, y, width, height);
       const textColor = item.text_color || getExactTextColorFromCanvas(ctx, x, y, width, height, bgColor);
-      const visualStyle = estimateImageTextStyle(ctx, x, y, width, height, bgColor);
+      const visualStyle = estimateImageTextStyle(ctx, x, y, width, height, bgColor, item.text);
       const fontSize = visualStyle.fontSize;
       const bold = !!item.is_bold || visualStyle.bold;
 
@@ -1038,7 +1064,7 @@ async function runOcrOnCurrentPage(autoTriggered = false) {
           }
           const bgColor = sampleBackground(tempCtx, x, y, width, height);
           const textColor = item.text_color || getExactTextColorFromCanvas(tempCtx, x, y, width, height, bgColor);
-          const visualStyle = estimateImageTextStyle(tempCtx, x, y, width, height, bgColor);
+          const visualStyle = estimateImageTextStyle(tempCtx, x, y, width, height, bgColor, item.text);
           const fontSize = visualStyle.fontSize;
 
           detectedItems.push({
@@ -1685,6 +1711,7 @@ function renderStage() {
     el.style.fontFamily = t.fontFamily || 'Arial, sans-serif';
     el.style.fontWeight = t.bold ? '700' : '400';
     el.style.fontStyle = t.italic ? 'italic' : 'normal';
+    el.style.letterSpacing = `${t.letterSpacing || 0}px`;
 
     if (state.mode === 'image' && !isEdited) {
       el.style.color = 'transparent';
@@ -1969,6 +1996,7 @@ function activateDirectEditing(el, item) {
   el.style.fontFamily = item.fontFamily || 'Arial, sans-serif';
   el.style.fontWeight = item.bold ? '700' : '400';
   el.style.fontStyle = item.italic ? 'italic' : 'normal';
+  el.style.letterSpacing = `${item.letterSpacing || 0}px`;
 
   // If this was a detected block with generic placeholder, clear so typing replaces it seamlessly
   if ((item.text === 'Edit text' || item.text === 'Click to type') && !item.isEdited) {
