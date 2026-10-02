@@ -346,58 +346,47 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
   const safeH = Math.max(1, Math.min(Math.round(height), ctx.canvas.height - Math.max(0, Math.round(y))));
   let dark = 0, total = 0;
   let inkMinX = safeW, inkMinY = safeH, inkMaxX = -1, inkMaxY = -1;
+
   try {
     const data = ctx.getImageData(Math.max(0, Math.round(x)), Math.max(0, Math.round(y)), safeW, safeH).data;
     const m = /^#([0-9a-f]{6})$/i.exec(bgColor || '');
     const br = m ? parseInt(m[1].slice(0,2),16) : 255;
     const bgc = m ? parseInt(m[1].slice(2,4),16) : 255;
     const bb = m ? parseInt(m[1].slice(4,6),16) : 255;
-    for (let py=0; py<safeH; py++) {
-      for (let px=0; px<safeW; px++) {
+
+    for (let py = 0; py < safeH; py++) {
+      for (let px = 0; px < safeW; px++) {
         const i = (py * safeW + px) * 4;
-        if (data[i+3] < 100) continue;
+        if (data[i + 3] < 100) continue;
         total++;
-        const contrast = Math.abs(data[i]-br)+Math.abs(data[i+1]-bgc)+Math.abs(data[i+2]-bb);
-        if (contrast > 90) {
+        const contrast = Math.abs(data[i] - br) + Math.abs(data[i + 1] - bgc) + Math.abs(data[i + 2] - bb);
+        if (contrast > 55) {
           dark++;
-          inkMinX = Math.min(inkMinX, px); inkMaxX = Math.max(inkMaxX, px);
-          inkMinY = Math.min(inkMinY, py); inkMaxY = Math.max(inkMaxY, py);
+          inkMinX = Math.min(inkMinX, px);
+          inkMaxX = Math.max(inkMaxX, px);
+          inkMinY = Math.min(inkMinY, py);
+          inkMaxY = Math.max(inkMaxY, py);
         }
       }
     }
   } catch (_) {}
-  const density = total ? dark / total : 0;
-  const inkWidth = inkMaxX >= inkMinX ? (inkMaxX - inkMinX + 1) : safeW;
-  const inkHeight = inkMaxY >= inkMinY ? (inkMaxY - inkMinY + 1) : safeH;
-  const bold = density > 0.20 || (width / Math.max(height,1) < 7 && density > 0.14);
+
+  const inkWidth = inkMaxX >= inkMinX ? inkMaxX - inkMinX + 1 : safeW;
+  const inkHeight = inkMaxY >= inkMinY ? inkMaxY - inkMinY + 1 : safeH;
+  const sourceInkArea = Math.max(1, inkWidth * inkHeight);
+  const sourceDensity = dark / sourceInkArea;
 
   const candidates = [
-    'Arial, sans-serif',
-    'Helvetica, Arial, sans-serif',
-    'Roboto, sans-serif',
-    'Inter, sans-serif',
-    'Open Sans, sans-serif',
-    'Lato, sans-serif',
-    'Montserrat, sans-serif',
-    'Poppins, sans-serif',
-    'Nunito, sans-serif',
-    'Raleway, sans-serif',
-    'Segoe UI, Arial, sans-serif',
-    'Verdana, sans-serif',
-    'Tahoma, sans-serif',
-    'Calibri, sans-serif',
-    'Candara, sans-serif',
-    'Trebuchet MS, sans-serif',
-    'Georgia, serif',
-    'Times New Roman, serif',
-    'Garamond, serif',
-    'Merriweather, serif',
-    'Roboto Slab, serif',
-    'Courier New, monospace',
-    'Consolas, monospace'
+    'Arial, sans-serif','Helvetica, Arial, sans-serif','Roboto, sans-serif',
+    'Inter, sans-serif','Open Sans, sans-serif','Lato, sans-serif',
+    'Montserrat, sans-serif','Poppins, sans-serif','Nunito, sans-serif',
+    'Raleway, sans-serif','Segoe UI, Arial, sans-serif','Verdana, sans-serif',
+    'Tahoma, sans-serif','Calibri, sans-serif','Candara, sans-serif',
+    'Trebuchet MS, sans-serif','Georgia, serif','Times New Roman, serif',
+    'Garamond, serif','Merriweather, serif','Roboto Slab, serif',
+    'Courier New, monospace','Consolas, monospace'
   ];
-  // Match visible glyphs, not OCR-box padding. Detect weight together with
-  // the family so normal UI text is not accidentally rendered bold.
+
   const targetH = Math.max(8, inkHeight);
   const targetW = Math.max(8, inkWidth);
   let bestFamily = 'Arial, sans-serif';
@@ -408,34 +397,37 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
 
   if (sampleText && ctx && typeof ctx.measureText === 'function') {
     const probeCanvas = document.createElement('canvas');
-    probeCanvas.width = 900;
-    probeCanvas.height = 260;
+    probeCanvas.width = 1000;
+    probeCanvas.height = 300;
     const probeCtx = probeCanvas.getContext('2d', { willReadFrequently: true });
 
     for (const family of candidates) {
-      for (const weight of [400, 700]) {
+      for (const weight of [300, 400, 500, 600, 700, 800]) {
         ctx.save();
-        ctx.font = `${weight} 100px ${family}`;
+        ctx.font = weight + ' 100px ' + family;
         const probe = ctx.measureText(sampleText);
         const glyphH = Math.max(1, (probe.actualBoundingBoxAscent || 75) + (probe.actualBoundingBoxDescent || 20));
         const size = Math.max(8, Math.min(180, 100 * targetH / glyphH));
-        ctx.font = `${weight} ${size}px ${family}`;
+        ctx.font = weight + ' ' + size + 'px ' + family;
         const measured = Math.max(1, ctx.measureText(sampleText).width);
+        ctx.restore();
 
-        let densityScore = 0;
+        let renderedInkWidth = measured;
+        let renderedInkHeight = targetH;
+        let renderedDensity = sourceDensity;
+
         if (probeCtx) {
           probeCtx.clearRect(0, 0, probeCanvas.width, probeCanvas.height);
           probeCtx.fillStyle = '#fff';
           probeCtx.fillRect(0, 0, probeCanvas.width, probeCanvas.height);
           probeCtx.fillStyle = '#000';
-          probeCtx.font = `${weight} ${size}px ${family}`;
+          probeCtx.font = weight + ' ' + size + 'px ' + family;
           probeCtx.textBaseline = 'top';
-          probeCtx.fillText(sampleText, 8, 8);
+          probeCtx.fillText(sampleText, 20, 20);
 
           const pd = probeCtx.getImageData(0, 0, probeCanvas.width, probeCanvas.height).data;
-          let pInk = 0;
-          let pMinX = probeCanvas.width, pMaxX = -1;
-          let pMinY = probeCanvas.height, pMaxY = -1;
+          let pInk = 0, pMinX = probeCanvas.width, pMaxX = -1, pMinY = probeCanvas.height, pMaxY = -1;
+
           for (let py = 0; py < probeCanvas.height; py++) {
             for (let px = 0; px < probeCanvas.width; px++) {
               const i = (py * probeCanvas.width + px) * 4;
@@ -446,17 +438,22 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
               }
             }
           }
-          const renderedDensity = pInk / (probeCanvas.width * probeCanvas.height);
-          const renderedInkHeight = pMaxY >= pMinY ? pMaxY - pMinY + 1 : targetH;
-          const sourceDensity = dark / Math.max(1, total);
-          const densityTerm = Math.abs(Math.log((renderedDensity + 0.0001) / (sourceDensity + 0.0001)));
-          const heightTerm = Math.abs(Math.log(renderedInkHeight / Math.max(1, targetH)));
-          densityScore = densityTerm + heightTerm * 0.35;
+
+          if (pMaxX >= pMinX && pMaxY >= pMinY) {
+            renderedInkWidth = pMaxX - pMinX + 1;
+            renderedInkHeight = pMaxY - pMinY + 1;
+            renderedDensity = pInk / Math.max(1, renderedInkWidth * renderedInkHeight);
+          }
         }
 
-        ctx.restore();
-        const widthScore = Math.abs(Math.log(measured / targetW));
-        const score = widthScore * 0.62 + densityScore * 0.38;
+        const widthScore = Math.abs(Math.log(renderedInkWidth / targetW));
+        const heightScore = Math.abs(Math.log(renderedInkHeight / targetH));
+        const densityScore = Math.abs(Math.log((renderedDensity + 0.001) / (sourceDensity + 0.001)));
+
+        // Weight/stroke thickness is determined primarily by raster density.
+        // Size is determined by visible ink height, not the OCR box height.
+        const score = widthScore * 0.42 + heightScore * 0.30 + densityScore * 0.28;
+
         if (score < bestScore) {
           bestScore = score;
           bestFamily = family;
@@ -467,22 +464,26 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
     }
 
     ctx.save();
-    ctx.font = `${bestWeight} ${bestSize}px ${bestFamily}`;
+    ctx.font = bestWeight + ' ' + bestSize + 'px ' + bestFamily;
     const measured = Math.max(1, ctx.measureText(sampleText).width);
     ctx.restore();
-    bestSpacing = Math.max(-0.25, Math.min(0.8, (targetW - measured) / Math.max(1, sampleText.length - 1)));
+
+    bestSpacing = Math.max(-0.35, Math.min(0.7,
+      (targetW - measured) / Math.max(1, sampleText.length - 1)
+    ));
   }
+
   return {
     fontSize: Math.round(bestSize),
     fontFamily: bestFamily,
-    bold: bestWeight >= 700,
+    bold: bestWeight >= 650,
+    fontWeight: bestWeight,
     italic: false,
     letterSpacing: bestSpacing,
     sourceInkWidth: inkWidth,
     sourceInkHeight: inkHeight
   };
 }
-
 async function loadImageFile(file) {
   state.originalPdfBytes = null;
   state.fileName = file.name;
@@ -557,8 +558,9 @@ async function loadImageFile(file) {
         width,
         height,
         fontSize,
-        // Use the family inferred from the actual raster pixels.
+        // Use family, weight and visible glyph geometry inferred from raster pixels.
         fontFamily: visualStyle.fontFamily || item.font_family || 'Arial, sans-serif',
+        fontWeight: visualStyle.fontWeight || (bold ? 700 : 400),
         pdfFontType: 'Helvetica',
         color: textColor,
         bold: bold,
@@ -1814,7 +1816,9 @@ function renderStage() {
     el.style.fontSize = `${t.fontSize * coordRatio}px`;
     el.style.lineHeight = state.mode === 'image' ? '1' : '1.05';
     el.style.fontFamily = t.fontFamily || 'Arial, sans-serif';
-    el.style.fontWeight = t.bold ? '700' : '400';
+    el.style.fontWeight = state.mode === 'image'
+      ? String(t.fontWeight || (t.bold ? 700 : 400))
+      : (t.bold ? '700' : '400');
     el.style.fontStyle = t.italic ? 'italic' : 'normal';
     el.style.padding = state.mode === 'image' ? '0' : '0 1px';
     el.style.letterSpacing = state.mode === 'image' ? `${t.letterSpacing || 0}px` : '0px';
