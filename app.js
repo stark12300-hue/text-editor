@@ -378,6 +378,12 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
   let bestFamily = 'Arial, sans-serif', bestSize = Math.max(8, Math.round(targetH)), bestSpacing = 0, bestScore = Infinity;
 
   if (sampleText && ctx && typeof ctx.measureText === 'function') {
+    // Compare candidate fonts against actual raster glyph geometry and density.
+    const probeCanvas = document.createElement('canvas');
+    probeCanvas.width = 700;
+    probeCanvas.height = 220;
+    const probeCtx = probeCanvas.getContext('2d', { willReadFrequently: true });
+
     for (const family of candidates) {
       ctx.save();
       ctx.font = `${bold ? '700 ' : '400 '}100px ${family}`;
@@ -386,8 +392,29 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
       const size = Math.max(8, Math.min(180, 100 * targetH / glyphH));
       ctx.font = `${bold ? '700 ' : '400 '}${size}px ${family}`;
       const measured = Math.max(1, ctx.measureText(sampleText).width);
+
+      let densityScore = 0;
+      if (probeCtx) {
+        probeCtx.clearRect(0, 0, probeCanvas.width, probeCanvas.height);
+        probeCtx.fillStyle = '#fff';
+        probeCtx.fillRect(0, 0, probeCanvas.width, probeCanvas.height);
+        probeCtx.fillStyle = '#000';
+        probeCtx.font = `${bold ? '700 ' : '400 '}${size}px ${family}`;
+        probeCtx.textBaseline = 'top';
+        probeCtx.fillText(sampleText, 8, 8);
+        const pd = probeCtx.getImageData(0, 0, probeCanvas.width, probeCanvas.height).data;
+        let pInk = 0;
+        for (let i = 0; i < pd.length; i += 4) {
+          if (pd[i] < 245 || pd[i + 1] < 245 || pd[i + 2] < 245) pInk++;
+        }
+        const renderedDensity = pInk / (probeCanvas.width * probeCanvas.height);
+        const sourceDensity = dark / Math.max(1, total);
+        densityScore = Math.abs(Math.log((renderedDensity + 0.0001) / (sourceDensity + 0.0001)));
+      }
+
       ctx.restore();
-      const score = Math.abs(Math.log(measured / targetW));
+      const widthScore = Math.abs(Math.log(measured / targetW));
+      const score = widthScore * 0.72 + densityScore * 0.28;
       if (score < bestScore) { bestScore = score; bestFamily = family; bestSize = size; }
     }
     ctx.save();
