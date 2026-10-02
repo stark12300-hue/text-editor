@@ -419,7 +419,7 @@ async function loadImageFile(file) {
       const bold = !!item.is_bold || isInkBoxBold(ctx, x, y, width, height, bgColor);
       const fontSize = estimateImageFontSize(item.text, item.font_family, bold, width, height);
 
-      extractedItems.push({
+      const builtItem = {
         id: item.blockId || uid(),
         text: item.text,
         originalText: item.text,
@@ -443,7 +443,9 @@ async function loadImageFile(file) {
         isEdited: false,
         isAdded: false,
         confidence: item.confidence
-      });
+      };
+      refineImageItemStyle(ctx, builtItem);
+      extractedItems.push(builtItem);
     });
   }
 
@@ -806,6 +808,171 @@ function estimateImageFontSize(text, fontFamily, bold, boxW, boxH) {
   }
 }
 
+// ---------- Image mode: copy the ORIGINAL text style (font, weight, slant, size, baseline) ----------
+const IMAGE_FONT_CANDIDATES = [
+  { css: 'Arial, sans-serif', pdf: 'Helvetica' },
+  { css: "'Times New Roman', serif", pdf: 'TimesRoman' },
+  { css: 'Georgia, serif', pdf: 'TimesRoman' },
+  { css: "'Courier New', monospace", pdf: 'Courier' },
+  { css: "'Trebuchet MS', sans-serif", pdf: 'Helvetica' }
+];
+
+function measureInkMetrics(text, fontCss, bold, italic) {
+  if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
+  _measureCtx.font = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}100px ${fontCss}`;
+  const m = _measureCtx.measureText(text);
+  const asc = m.actualBoundingBoxAscent, desc = m.actualBoundingBoxDescent;
+  const inkW = (m.actualBoundingBoxLeft || 0) + (m.actualBoundingBoxRight || 0);
+  if (!isFinite(asc) || !isFinite(desc) || !(asc + desc > 0) || !(inkW > 0)) return null;
+  return { asc, desc, inkW };
+}
+
+// Slant detection: de-slant the ink with a few shear values; the sharpest column profile wins.
+function detectItalicFromMask(mask, w, h, bx0, by0, bx1, by1) {
+  const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
+  if (bh < 10 || bw < 20) return false;
+  const score = sh => {
+    const off = Math.ceil(sh * bh) + 1;
+    const cols = new Uint32Array(bw + off + 2);
+    for (let y = by0; y <= by1; y++) {
+      const shift = Math.round(sh * (by1 - y));
+      for (let x = bx0; x <= bx1; x++) {
+        if (mask[y * w + x]) cols[x - bx0 - shift + off]++;
+      }
+    }
+    let sum = 0;
+    for (let i = 0; i < cols.length; i++) sum += cols[i] * cols[i];
+    return sum;
+  };
+  const base = score(0);
+  let best = base, bestS = 0;
+  for (const sh of [0.12, 0.2, 0.27, 0.34]) {
+    const sc = score(sh);
+    if (sc > best) { best = sc; bestS = sh; }
+  }
+  return bestS >= 0.2 && best > base * 1.08;
+}
+
+// Reads the original glyph pixels and sets fontFamily / bold / italic / fontSize / box / baseline on the item.
+function refineImageItemStyle(ctx, item) {
+  try {
+    const text = (item.originalText || item.text || '').trim();
+    if (!text) return;
+    const W = ctx.canvas.width, H = ctx.canvas.height;
+    const m = 2;
+    const rx = Math.max(0, Math.round(item.x) - m), ry = Math.max(0, Math.round(item.y) - m);
+    const rw = Math.min(W - rx, Math.round(item.width) + m * 2);
+    const rh = Math.min(H - ry, Math.round(item.height) + m * 2);
+    if (rw < 6 || rh < 6) return;
+
+    const data = ctx.getImageData(rx, ry, rw, rh).data;
+    const bg = hexToRgb(item.bgColor || '#ffffff');
+    const bR = bg.r * 255, bG = bg.g * 255, bB = bg.b * 255;
+    const diffs = new Uint16Array(rw * rh);
+    let maxDiff = 0;
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+      const d = Math.abs(data[i] - bR) + Math.abs(data[i + 1] - bG) + Math.abs(data[i + 2] - bB);
+      diffs[p] = d;
+      if (d > maxDiff) maxDiff = d;
+    }
+    if (maxDiff < 80) return;
+    const thr = Math.max(50, maxDiff * 0.45);
+    const mask = new Uint8Array(rw * rh);
+    for (let p = 0; p < mask.length; p++) mask[p] = diffs[p] >= thr ? 1 : 0;
+
+    // drop long straight lines (box borders / underlines) that are not text
+    if (rw > 20) for (let y = 0; y < rh; y++) {
+      let c = 0; for (let x = 0; x < rw; x++) c += mask[y * rw + x];
+      if (c >= rw * 0.92) for (let x = 0; x < rw; x++) mask[y * rw + x] = 0;
+    }
+    if (rh > 20) for (let x = 0; x < rw; x++) {
+      let c = 0; for (let y = 0; y < rh; y++) c += mask[y * rw + x];
+      if (c >= rh * 0.97) for (let y = 0; y < rh; y++) mask[y * rw + x] = 0;
+    }
+
+    let x0 = rw, y0 = rh, x1 = -1, y1 = -1, count = 0;
+    for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
+      if (mask[y * rw + x]) { count++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    if (count < 8 || x1 - x0 < 3 || y1 - y0 < 3) return;
+    const inkW = x1 - x0 + 1, inkH = y1 - y0 + 1;
+
+    // --- bold: median vertical-stroke thickness relative to font size
+    const F0 = inkH / 0.95;
+    const runs = [];
+    for (let y = y0; y <= y1; y++) {
+      let run = 0;
+      for (let x = x0; x <= x1 + 1; x++) {
+        if (x <= x1 && mask[y * rw + x]) run++;
+        else { if (run > 0 && run <= inkH * 0.5) runs.push(run); run = 0; }
+      }
+    }
+    let bold = !!item.bold;
+    if (F0 >= 14 && runs.length >= 5) {
+      runs.sort((a, b) => a - b);
+      bold = runs[Math.floor(runs.length / 2)] / F0 > 0.125;
+    }
+
+    // --- italic
+    const italic = detectItalicFromMask(mask, rw, rh, x0, y0, x1, y1);
+
+    // --- font family + size: choose the font whose width AND height both match the original text
+    let chosen = IMAGE_FONT_CANDIDATES[0];
+    let metrics = measureInkMetrics(text, chosen.css, bold, italic);
+    if (!metrics) return;
+    const useWidth = text.length >= 4 && inkW >= 24;
+    if (useWidth) {
+      const errOf = (mt) => Math.abs((mt.asc + mt.desc) * (inkW / mt.inkW) / 100 - inkH) / inkH;
+      let bestErr = errOf(metrics), arialErr = bestErr;
+      for (let i = 1; i < IMAGE_FONT_CANDIDATES.length; i++) {
+        const c = IMAGE_FONT_CANDIDATES[i];
+        const mt = measureInkMetrics(text, c.css, bold, italic);
+        if (!mt) continue;
+        const e = errOf(mt);
+        if (e < bestErr) { bestErr = e; if (e < arialErr - 0.06) { chosen = c; metrics = mt; } }
+      }
+    }
+    const Fh = inkH * 100 / (metrics.asc + metrics.desc);
+    let F = useWidth ? inkW * 100 / metrics.inkW : Fh;
+    F = Math.min(Fh * 1.25, Math.max(Fh * 0.8, F));   // guard against OCR dropping/adding characters
+
+    item.fontFamily = chosen.css;
+    item.pdfFontType = chosen.pdf;
+    item.bold = bold;
+    item.italic = italic;
+    item.fontSize = Math.max(8, Math.round(F));
+    item.pdfFontSize = Math.round(item.fontSize * 0.75);
+    item.x = Math.max(0, rx + x0 - 1);
+    item.y = Math.max(0, ry + y0 - 1);
+    item.width = inkW + 2;
+    item.height = inkH + 2;
+    item.baseline = metrics.asc * F / 100 + 1;     // distance from box top to the text baseline
+    item.styleRefined = true;
+  } catch (e) {
+    console.warn('Style analysis skipped:', e && e.message);
+  }
+}
+
+// Baseline (distance from box top) used by both the on-screen overlay and the PNG export
+function getImageBaseline(t) {
+  return (typeof t.baseline === 'number') ? t.baseline : (t.height / 2 + t.fontSize * 0.3465);
+}
+
+// CSS line-height that puts the text baseline exactly at getImageBaseline(t) inside the overlay box
+function getImageLineHeightPx(t) {
+  let fa = t.fontSize * 0.905, fd = t.fontSize * 0.212;
+  try {
+    if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
+    _measureCtx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}100px ${t.fontFamily || 'Arial, sans-serif'}`;
+    const m = _measureCtx.measureText('Hg');
+    if (isFinite(m.fontBoundingBoxAscent) && isFinite(m.fontBoundingBoxDescent) && m.fontBoundingBoxAscent > 0) {
+      fa = m.fontBoundingBoxAscent * t.fontSize / 100;
+      fd = m.fontBoundingBoxDescent * t.fontSize / 100;
+    }
+  } catch (e) { /* keep defaults */ }
+  return Math.max(1, 2 * getImageBaseline(t) - fa + fd);
+}
+
 // Image mode: area that must be covered when the original text is edited/deleted.
 // Uses the OCR box (+ small pad) only, so neighbouring content is never wiped.
 function getImageMaskRect(t) {
@@ -1138,6 +1305,7 @@ async function runOcrOnCurrentPage(autoTriggered = false) {
           });
         });
 
+        if (state.mode === 'image') detectedItems.forEach(it => refineImageItemStyle(tempCtx, it));
         if (state.mode !== 'image') eraseTextPixelsPrecisely(tempCtx, detectedItems);
         current.dataUrl = tempCanvas.toDataURL('image/png');
         current.items = detectedItems;
@@ -1252,7 +1420,8 @@ async function runOcrOnCurrentPage(autoTriggered = false) {
     });
 
     if (detectedCount > 0) {
-      if (state.mode !== 'image') eraseTextPixelsPrecisely(tempCtx, detectedItems);
+      if (state.mode === 'image') detectedItems.forEach(it => refineImageItemStyle(tempCtx, it));
+        if (state.mode !== 'image') eraseTextPixelsPrecisely(tempCtx, detectedItems);
       current.dataUrl = tempCanvas.toDataURL('image/png');
       current.items = detectedItems;
       saveHistory();
@@ -1774,7 +1943,7 @@ function renderStage() {
     el.style.width = `${t.width * coordRatio}px`;
     el.style.height = `${t.height * coordRatio}px`;
     el.style.fontSize = `${t.fontSize * coordRatio}px`;
-    el.style.lineHeight = state.mode === 'image' ? `${Math.max(1, t.height * coordRatio)}px` : '1.05';
+    el.style.lineHeight = state.mode === 'image' ? `${getImageLineHeightPx(t) * coordRatio}px` : '1.05';
     el.style.fontFamily = t.fontFamily || 'Arial, sans-serif';
     el.style.fontWeight = t.bold ? '700' : '400';
     el.style.fontStyle = t.italic ? 'italic' : 'normal';
@@ -1938,6 +2107,8 @@ function expandWordAndEdit(clickX, clickY) {
       isEdited: !recognized,
       isAdded: !recognized
     };
+
+    if (state.mode === 'image' && recognized) refineImageItemStyle(ctx, newItem);
 
     // Erase the original text ink in this box so it's clean paper underneath!
     // (image mode keeps the base image pristine; the box is masked at render/export time)
@@ -2253,6 +2424,9 @@ function updateSelected(patch, pushHistory = true) {
   const item = getSelectedItem();
   if (!item) return;
 
+  if (state.mode === 'image' && patch.fontSize && typeof item.baseline === 'number' && item.fontSize) {
+    patch.baseline = item.baseline * patch.fontSize / item.fontSize;
+  }
   Object.assign(item, patch);
   item.isEdited = true;
 
@@ -2449,9 +2623,9 @@ $('exportImageBtn').onclick = async () => {
         ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
         ctx.fillStyle = t.color || '#000000';
         if (state.mode === 'image') {
-          // Same vertical centring as the on-screen overlay (line-height = box height)
+          // Same baseline as the on-screen overlay and as the original text
           ctx.textBaseline = 'alphabetic';
-          ctx.fillText(t.text, t.x, t.y + t.height / 2 + t.fontSize * 0.3465);
+          ctx.fillText(t.text, t.x, t.y + getImageBaseline(t));
         } else {
           ctx.textBaseline = 'top';
           ctx.fillText(t.text, t.x, t.y);
