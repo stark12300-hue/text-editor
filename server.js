@@ -299,27 +299,11 @@ async function runTesseractOcrPipeline(imgBuffer, isFallback = false) {
           // Sort words strictly left-to-right within this line
           validWords.sort((a, b) => a.bbox.x0 - b.bbox.x0);
 
-          let curBlock = [];
+          // Keep every OCR word as its own editable field.
+          // This prevents a tap on one word from selecting the entire sentence/line.
           for (const w of validWords) {
-            if (!curBlock.length) {
-              curBlock.push(w);
-              continue;
-            }
-            const prev = curBlock[curBlock.length - 1];
-            const minH = Math.min(prev.bbox.y1 - prev.bbox.y0, w.bbox.y1 - w.bbox.y0);
-            const gap = w.bbox.x0 - prev.bbox.x1;
-            const maxGap = Math.max(10, Math.round(minH * 0.85));
-
-            if (gap >= -4 && gap <= maxGap) {
-              // Deduplicate consecutive repeated words ("dispatches dispatches...")
-              if (w.text.toLowerCase() === prev.text.toLowerCase() && gap <= 3) continue;
-              curBlock.push(w);
-            } else {
-              rawBlocks.push(curBlock);
-              curBlock = [w];
-            }
+            rawBlocks.push([w]);
           }
-          if (curBlock.length) rawBlocks.push(curBlock);
         }
       }
     }
