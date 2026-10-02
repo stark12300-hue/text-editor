@@ -1637,7 +1637,10 @@ function renderStage() {
   }
 
   if (emptyState) emptyState.classList.add('hidden');
-  if (stageWrapper) stageWrapper.classList.remove('hidden');
+  if (stageWrapper) {
+    stageWrapper.classList.remove('hidden');
+    stageWrapper.classList.toggle('image-mode', state.mode === 'image');
+  }
 
   const baseWidth = current.ptWidth || current.width;
   const baseHeight = current.ptHeight || current.height;
