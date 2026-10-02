@@ -341,6 +341,71 @@ async function extractTextFromImageAi(dataUrl) {
   return [];
 }
 
+function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = '') {
+  const safeW = Math.max(1, Math.min(Math.round(width), ctx.canvas.width - Math.max(0, Math.round(x))));
+  const safeH = Math.max(1, Math.min(Math.round(height), ctx.canvas.height - Math.max(0, Math.round(y))));
+  let dark = 0, total = 0;
+  let inkMinX = safeW, inkMinY = safeH, inkMaxX = -1, inkMaxY = -1;
+  try {
+    const data = ctx.getImageData(Math.max(0, Math.round(x)), Math.max(0, Math.round(y)), safeW, safeH).data;
+    const m = /^#([0-9a-f]{6})$/i.exec(bgColor || '');
+    const br = m ? parseInt(m[1].slice(0,2),16) : 255;
+    const bgc = m ? parseInt(m[1].slice(2,4),16) : 255;
+    const bb = m ? parseInt(m[1].slice(4,6),16) : 255;
+    for (let py=0; py<safeH; py++) {
+      for (let px=0; px<safeW; px++) {
+        const i = (py * safeW + px) * 4;
+        if (data[i+3] < 100) continue;
+        total++;
+        const contrast = Math.abs(data[i]-br)+Math.abs(data[i+1]-bgc)+Math.abs(data[i+2]-bb);
+        if (contrast > 90) {
+          dark++;
+          inkMinX = Math.min(inkMinX, px); inkMaxX = Math.max(inkMaxX, px);
+          inkMinY = Math.min(inkMinY, py); inkMaxY = Math.max(inkMaxY, py);
+        }
+      }
+    }
+  } catch (_) {}
+  const density = total ? dark / total : 0;
+  const inkWidth = inkMaxX >= inkMinX ? (inkMaxX - inkMinX + 1) : safeW;
+  const inkHeight = inkMaxY >= inkMinY ? (inkMaxY - inkMinY + 1) : safeH;
+  const bold = density > 0.20 || (width / Math.max(height,1) < 7 && density > 0.14);
+
+  const candidates = ['Arial, sans-serif','Helvetica, Arial, sans-serif','Segoe UI, Arial, sans-serif','Roboto, Arial, sans-serif','Verdana, sans-serif','Trebuchet MS, sans-serif','Georgia, serif','Times New Roman, serif','Courier New, monospace'];
+  const targetH = Math.max(8, height);
+  const targetW = Math.max(8, width);
+  let bestFamily = 'Arial, sans-serif', bestSize = Math.max(8, Math.round(targetH)), bestSpacing = 0, bestScore = Infinity;
+
+  if (sampleText && ctx && typeof ctx.measureText === 'function') {
+    for (const family of candidates) {
+      ctx.save();
+      ctx.font = `${bold ? '700 ' : '400 '}100px ${family}`;
+      const probe = ctx.measureText(sampleText);
+      const glyphH = Math.max(1, (probe.actualBoundingBoxAscent || 75) + (probe.actualBoundingBoxDescent || 20));
+      const size = Math.max(8, Math.min(180, 100 * targetH / glyphH));
+      ctx.font = `${bold ? '700 ' : '400 '}${size}px ${family}`;
+      const measured = Math.max(1, ctx.measureText(sampleText).width);
+      ctx.restore();
+      const score = Math.abs(Math.log(measured / targetW));
+      if (score < bestScore) { bestScore = score; bestFamily = family; bestSize = size; }
+    }
+    ctx.save();
+    ctx.font = `${bold ? '700 ' : '400 '}${bestSize}px ${bestFamily}`;
+    const measured = Math.max(1, ctx.measureText(sampleText).width);
+    ctx.restore();
+    bestSpacing = Math.max(-0.5, Math.min(2.5, (targetW - measured) / Math.max(1, sampleText.length)));
+  }
+  return {
+    fontSize: Math.round(bestSize),
+    fontFamily: bestFamily,
+    bold,
+    italic: false,
+    letterSpacing: bestSpacing,
+    sourceInkWidth: inkWidth,
+    sourceInkHeight: inkHeight
+  };
+}
+
 async function loadImageFile(file) {
   state.originalPdfBytes = null;
   state.fileName = file.name;
@@ -400,10 +465,11 @@ async function loadImageFile(file) {
         return;
       }
 
-      const fontSize = Math.max(10, Math.round(height * 0.82));
       const bgColor = sampleBackground(ctx, x, y, width, height);
       const textColor = item.text_color || getExactTextColorFromCanvas(ctx, x, y, width, height, bgColor);
-      const bold = !!item.is_bold || isInkBoxBold(ctx, x, y, width, height, bgColor);
+      const visualStyle = estimateImageTextStyle(ctx, x, y, width, height, bgColor, item.text);
+      const fontSize = visualStyle.fontSize;
+      const bold = !!item.is_bold || visualStyle.bold;
 
       extractedItems.push({
         id: item.blockId || uid(),
@@ -433,7 +499,90 @@ async function loadImageFile(file) {
     });
   }
 
-  // 1.5. If server OCR is unavailable, run local document segmentation
+  // 1.5. If server OCR is unavailable, use the same browser Tesseract OCR
+  // that powers the manual Scan OCR button. Document segmentation alone cannot
+  // recognize the actual words, so it must not be the primary fallback.
+  if (extractedItems.length === 0 && typeof Tesseract !== 'undefined') {
+    try {
+      const worker = await Tesseract.createWorker('eng', 1, {
+        logger: m => {
+          if (m.status === 'recognizing text' && scanPercent) {
+            scanPercent.textContent = `${Math.round(m.progress * 100)}%`;
+          }
+        }
+      });
+
+      const ocrCanvas = document.createElement('canvas');
+      // Upscale smaller images before OCR for better recognition.
+      const maxDim = Math.max(canvas.width, canvas.height);
+      const ocrScale = maxDim < 1600 ? Math.min(2, 1600 / maxDim) : 1;
+      ocrCanvas.width = Math.round(canvas.width * ocrScale);
+      ocrCanvas.height = Math.round(canvas.height * ocrScale);
+      const ocrCtx = ocrCanvas.getContext('2d');
+      ocrCtx.imageSmoothingEnabled = true;
+      ocrCtx.imageSmoothingQuality = 'high';
+      ocrCtx.drawImage(canvas, 0, 0, ocrCanvas.width, ocrCanvas.height);
+
+      const ocrResult = await worker.recognize(ocrCanvas, {}, { blocks: true });
+      await worker.terminate();
+
+      const ocrLines = [];
+      if (ocrResult.data?.blocks) {
+        for (const block of ocrResult.data.blocks) {
+          for (const para of (block.paragraphs || [])) {
+            for (const line of (para.lines || [])) {
+              if (line.text?.trim()) ocrLines.push(line);
+            }
+          }
+        }
+      } else if (ocrResult.data?.lines) {
+        ocrLines.push(...ocrResult.data.lines);
+      }
+
+      for (const line of ocrLines) {
+        const text = line.text?.trim();
+        const conf = line.confidence;
+        const bbox = line.bbox;
+        if (!text || !bbox || (conf !== undefined && conf < 20)) continue;
+
+        const x = Math.max(0, Math.round(bbox.x0 / ocrScale));
+        const y = Math.max(0, Math.round(bbox.y0 / ocrScale));
+        const width = Math.max(12, Math.round((bbox.x1 - bbox.x0) / ocrScale));
+        const height = Math.max(10, Math.round((bbox.y1 - bbox.y0) / ocrScale));
+        if (width < 8 || height < 6) continue;
+
+        const bgColor = sampleBackground(ctx, x, y, width, height);
+        const textColor = getExactTextColorFromCanvas(ctx, x, y, width, height, bgColor);
+
+        extractedItems.push({
+          id: uid(),
+          text,
+          originalText: text,
+          x, y, width, height,
+          fontSize: Math.max(10, Math.round(height * 1.0)),
+          fontFamily: 'Arial, sans-serif',
+          pdfFontType: 'Helvetica',
+          color: textColor,
+          bold: false,
+          italic: false,
+          bgColor: bgColor || '#ffffff',
+          pdfX: Math.round(x * 0.75),
+          pdfY: Math.round((canvas.height - y - height) * 0.75),
+          pdfWidth: Math.round(width * 0.75),
+          pdfHeight: Math.round(height * 0.75),
+          pdfFontSize: Math.round(height * 0.82 * 0.75),
+          pageNum: 1,
+          isEdited: false,
+          isAdded: false,
+          confidence: conf
+        });
+      }
+    } catch (ocrErr) {
+      console.warn('Browser OCR fallback notice:', ocrErr);
+    }
+  }
+
+  // Last fallback: detect approximate text regions for manual editing.
   if (extractedItems.length === 0) {
     const localBlocks = detectDocumentTextBlocks(ctx, canvas.width, canvas.height);
     extractedItems.push(...localBlocks);
@@ -920,20 +1069,21 @@ async function runOcrOnCurrentPage(autoTriggered = false) {
           } else {
             return;
           }
-          const fontSize = Math.max(12, Math.round(height * 0.82));
           const bgColor = sampleBackground(tempCtx, x, y, width, height);
           const textColor = item.text_color || getExactTextColorFromCanvas(tempCtx, x, y, width, height, bgColor);
+          const visualStyle = estimateImageTextStyle(tempCtx, x, y, width, height, bgColor, item.text);
+          const fontSize = visualStyle.fontSize;
 
           detectedItems.push({
             id: uid(),
             text: item.text,
             originalText: item.text,
             x, y, width, height, fontSize,
-            fontFamily: item.font_family || 'Arial, sans-serif',
+            fontFamily: item.font_family || visualStyle.fontFamily,
             pdfFontType: 'Helvetica',
             color: textColor,
-            bold: !!item.is_bold,
-            italic: false,
+            bold: !!item.is_bold || visualStyle.bold,
+            italic: visualStyle.italic,
             bgColor: bgColor || '#ffffff',
             pdfX: Math.round(x * 0.75),
             pdfY: Math.round((current.height - y - height) * 0.75),
@@ -982,7 +1132,7 @@ async function runOcrOnCurrentPage(autoTriggered = false) {
     })();
 
     const timeoutTask = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('OCR Timeout')), 10000)
+      setTimeout(() => reject(new Error('OCR Timeout')), 60000)
     );
 
     const result = await Promise.race([ocrTask, timeoutTask]);
@@ -1460,6 +1610,21 @@ function renderPagesList() {
 }
 
 // Stage Rendering: Clean background image with perfectly non-overlapping text overlays
+function getImageReplacementScaleY(item) {
+  if (state.mode !== 'image' || !item?.sourceInkHeight || !item.text) return 1;
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.font = `${item.italic ? 'italic ' : ''}${item.bold ? '700 ' : '400 '}${item.fontSize}px ${item.fontFamily || 'Arial, sans-serif'}`;
+    const m = ctx.measureText(item.text);
+    const renderedInkHeight = Math.max(1, (m.actualBoundingBoxAscent || item.fontSize * 0.75) + (m.actualBoundingBoxDescent || item.fontSize * 0.2));
+    const scale = item.sourceInkHeight / renderedInkHeight;
+    return Math.max(0.8, Math.min(1.8, scale));
+  } catch (_) {
+    return 1;
+  }
+}
+
 function renderStage() {
   const emptyState = $('emptyState');
   const stageWrapper = $('stageWrapper');
@@ -1564,10 +1729,19 @@ function renderStage() {
     el.style.width = `${t.width * coordRatio}px`;
     el.style.height = `${t.height * coordRatio}px`;
     el.style.fontSize = `${t.fontSize * coordRatio}px`;
-    el.style.lineHeight = '1.05';
+    el.style.lineHeight = state.mode === 'image' ? '1' : '1.05';
     el.style.fontFamily = t.fontFamily || 'Arial, sans-serif';
     el.style.fontWeight = t.bold ? '700' : '400';
     el.style.fontStyle = t.italic ? 'italic' : 'normal';
+    el.style.padding = state.mode === 'image' ? '0' : '0 1px';
+    el.style.letterSpacing = state.mode === 'image' ? `${t.letterSpacing || 0}px` : '0px';
+    if (state.mode === 'image' && isEdited) {
+      const sy = getImageReplacementScaleY(t);
+      el.style.transformOrigin = 'left top';
+      el.style.transform = `scaleY(${sy})`;
+    } else {
+      el.style.transform = 'none';
+    }
 
     if (state.mode === 'image' && !isEdited) {
       el.style.color = 'transparent';
@@ -1852,6 +2026,8 @@ function activateDirectEditing(el, item) {
   el.style.fontFamily = item.fontFamily || 'Arial, sans-serif';
   el.style.fontWeight = item.bold ? '700' : '400';
   el.style.fontStyle = item.italic ? 'italic' : 'normal';
+  el.style.padding = state.mode === 'image' ? '0' : '0 1px';
+  el.style.letterSpacing = state.mode === 'image' ? `${item.letterSpacing || 0}px` : '0px';
 
   // If this was a detected block with generic placeholder, clear so typing replaces it seamlessly
   if ((item.text === 'Edit text' || item.text === 'Click to type') && !item.isEdited) {
@@ -2228,116 +2404,246 @@ $('exportImageBtn').onclick = async () => {
   }
 };
 
-// EXPORT PDF: Render the prepared page image used by the editor.
-// PDF pages are rasterized during load, with original text surgically removed.
-// Exporting that prepared render avoids blank pages and PDF-coordinate mismatches.
+// EXPORT PDF: Direct Vector PDF-lib with strict boundary preservation & exact preview matching
 $('exportPdfBtn').onclick = async () => {
   if (document.activeElement && typeof document.activeElement.blur === 'function') {
     document.activeElement.blur();
   }
   if (!state.pages.length) return;
-
-  setStatus('Exporting PDF…', true);
+  setStatus('Exporting PDF with 100% original quality and compact file size…', true);
 
   try {
-    const { PDFDocument } = PDFLib;
-    const pdfDoc = await PDFDocument.create();
+    const { PDFDocument, rgb, StandardFonts } = PDFLib;
 
-    for (let i = 0; i < state.pages.length; i++) {
-      const p = state.pages[i];
-      setStatus(`Exporting page ${i + 1} of ${state.pages.length}…`, true);
+    if (state.originalPdfBytes) {
+      // 1. DIRECT LOSSLESS VECTOR ENGINE:
+      const pdfDoc = await PDFDocument.load(state.originalPdfBytes);
 
-      const pageWidth = p.ptWidth || 595.28;
-      const pageHeight = p.ptHeight || 841.89;
+      const fonts = {
+        Helvetica: await pdfDoc.embedFont(StandardFonts.Helvetica),
+        HelveticaBold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
+        HelveticaOblique: await pdfDoc.embedFont(StandardFonts.HelveticaOblique),
+        HelveticaBoldOblique: await pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique),
+        TimesRoman: await pdfDoc.embedFont(StandardFonts.TimesRoman),
+        TimesRomanBold: await pdfDoc.embedFont(StandardFonts.TimesRomanBold),
+        TimesRomanItalic: await pdfDoc.embedFont(StandardFonts.TimesRomanItalic),
+        TimesRomanBoldItalic: await pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic),
+        Courier: await pdfDoc.embedFont(StandardFonts.Courier),
+        CourierBold: await pdfDoc.embedFont(StandardFonts.CourierBold),
+        CourierOblique: await pdfDoc.embedFont(StandardFonts.CourierOblique),
+        CourierBoldOblique: await pdfDoc.embedFont(StandardFonts.CourierBoldOblique)
+      };
 
-      const canvas = document.createElement('canvas');
-      canvas.width = p.width;
-      canvas.height = p.height;
+      for (let pIdx = 0; pIdx < state.pages.length; pIdx++) {
+        const p = state.pages[pIdx];
+        const page = pdfDoc.getPage(pIdx);
 
-      const ctx = canvas.getContext('2d');
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
+        const pageHeight = p.ptHeight || page.getHeight() || p.height;
+        const scaleX = (p.ptWidth || p.width) / p.width;
+        const scaleY = (p.ptHeight || p.height) / p.height;
 
-      const baseImg = new Image();
-      baseImg.crossOrigin = 'anonymous';
-      await new Promise((resolve, reject) => {
-        baseImg.onload = resolve;
-        baseImg.onerror = () => reject(new Error(`Could not render page ${i + 1} for export.`));
-        baseImg.src = p.dataUrl;
-      });
+        const mediaBox = page.getMediaBox ? page.getMediaBox() : { x: 0, y: 0 };
+        const cropBox = page.getCropBox ? page.getCropBox() : mediaBox;
+        const boxOffsetX = cropBox.x || mediaBox.x || 0;
+        const boxOffsetY = cropBox.y || mediaBox.y || 0;
 
-      ctx.drawImage(baseImg, 0, 0, p.width, p.height);
-
-      if (state.originalPdfBytes) {
-        // PDF text has already been erased from p.dataUrl. Draw the current
-        // text layer back on top, preserving all other PDF graphics/images.
-        for (const t of (p.items || [])) {
-          if (!t.text || !t.text.trim()) continue;
-
-          ctx.save();
-          ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
-          ctx.textBaseline = 'top';
-
-          if (t.isAdded && t.bgColor && t.bgColor !== 'transparent') {
-            ctx.fillStyle = t.bgColor;
-            ctx.fillRect(
-              Math.max(0, t.x - 2),
-              Math.max(0, t.y - 2),
-              Math.max(t.width, (t.text || '').length * t.fontSize * 0.68) + 4,
-              t.height + 4
-            );
-          }
-
-          ctx.fillStyle = t.color || '#000000';
-          ctx.fillText(t.text, t.x, t.y);
-          ctx.restore();
-        }
-      } else {
-        // Image uploads start from a pristine image.
+        // A. Erase deleted items: exact mirror of preview overlay dimensions
         if (p.deletedItems && p.deletedItems.length) {
-          for (const del of p.deletedItems) {
-            ctx.save();
-            ctx.fillStyle = del.bgColor || '#ffffff';
-            const delOrigW = Math.max(
-              del.width,
-              (del.originalText || del.text || '').length * del.fontSize * 0.68
-            );
-            ctx.fillRect(Math.max(0, del.x - 2), Math.max(0, del.y - 2), delOrigW + 4, del.height + 4);
-            ctx.restore();
-          }
+          p.deletedItems.forEach(del => {
+            const bg = hexToRgb(del.bgColor || '#ffffff');
+            const delOrigW = Math.max(del.width, (del.originalText || del.text || '').length * del.fontSize * 0.68);
+            const overlayLeftPt = (del.x - 2) * scaleX;
+            const overlayTopPt = (del.y - 2) * scaleY;
+            const overlayWidthPt = (delOrigW + 4) * scaleX;
+            const overlayHeightPt = (del.height + 4) * scaleY;
+
+            const rectX = overlayLeftPt + boxOffsetX;
+            const rectY = pageHeight - (overlayTopPt + overlayHeightPt) + boxOffsetY;
+
+            page.drawRectangle({
+              x: Math.max(0, rectX),
+              y: Math.max(0, rectY),
+              width: overlayWidthPt,
+              height: overlayHeightPt,
+              color: rgb(bg.r, bg.g, bg.b),
+              opacity: 1.0
+            });
+          });
         }
 
-        for (const t of (p.items || [])) {
-          if (!t.text || !t.text.trim()) continue;
+        // B. Apply edited, replaced, or added text items with 100% opaque cover and crisp text
+        p.items.forEach(t => {
+          const isEdited = (t.isEdited && t.text !== t.originalText) || (t.isEdited && !t.isAdded) || (!t.isAdded && t.text !== t.originalText);
+          const isAdded = !!t.isAdded;
 
-          ctx.save();
-          const isEdited = !!t.isEdited && t.text !== t.originalText;
-          if ((isEdited || t.isAdded) && t.bgColor && t.bgColor !== 'transparent') {
-            ctx.fillStyle = t.bgColor;
+          // 1. Cleanly and completely cover original text with 100% opaque rectangle matching preview
+          if (isEdited) {
+            const bg = hexToRgb(t.bgColor || '#ffffff');
             const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
-            ctx.fillRect(Math.max(0, t.x - 2), Math.max(0, t.y - 2), origW + 4, t.height + 4);
+            const overlayLeftPt = (t.x - 2) * scaleX;
+            const overlayTopPt = (t.y - 2) * scaleY;
+            const overlayWidthPt = (origW + 4) * scaleX;
+            const overlayHeightPt = (t.height + 4) * scaleY;
+
+            const rectX = overlayLeftPt + boxOffsetX;
+            const rectY = pageHeight - (overlayTopPt + overlayHeightPt) + boxOffsetY;
+
+            page.drawRectangle({
+              x: Math.max(0, rectX),
+              y: Math.max(0, rectY),
+              width: overlayWidthPt,
+              height: overlayHeightPt,
+              color: rgb(bg.r, bg.g, bg.b),
+              opacity: 1.0
+            });
+          } else if (isAdded && t.bgColor && t.bgColor !== 'transparent' && t.bgColor !== '#ffffff') {
+            const bg = hexToRgb(t.bgColor);
+            const overlayLeftPt = (t.x - 2) * scaleX;
+            const overlayTopPt = (t.y - 2) * scaleY;
+            const overlayWidthPt = (t.width + 4) * scaleX;
+            const overlayHeightPt = (t.height + 4) * scaleY;
+
+            const rectX = overlayLeftPt + boxOffsetX;
+            const rectY = pageHeight - (overlayTopPt + overlayHeightPt) + boxOffsetY;
+
+            page.drawRectangle({
+              x: Math.max(0, rectX),
+              y: Math.max(0, rectY),
+              width: overlayWidthPt,
+              height: overlayHeightPt,
+              color: rgb(bg.r, bg.g, bg.b),
+              opacity: 1.0
+            });
           }
 
-          ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
-          ctx.fillStyle = t.color || '#000000';
-          ctx.textBaseline = 'top';
-          ctx.fillText(t.text, t.x, t.y);
-          ctx.restore();
-        }
+          // 2. Draw new text if present and edited/added
+          if ((isEdited || isAdded) && t.text && t.text.trim()) {
+            const fam = (t.fontFamily || '').toLowerCase();
+            let fontKey = 'Helvetica';
+            if (t.pdfFontType === 'TimesRoman' || fam.includes('times') || fam.includes('serif') || fam.includes('georgia')) {
+              fontKey = t.bold && t.italic ? 'TimesRomanBoldItalic' : t.bold ? 'TimesRomanBold' : t.italic ? 'TimesRomanItalic' : 'TimesRoman';
+            } else if (t.pdfFontType === 'Courier' || fam.includes('courier') || fam.includes('mono')) {
+              fontKey = t.bold && t.italic ? 'CourierBoldOblique' : t.bold ? 'CourierBold' : t.italic ? 'CourierOblique' : 'Courier';
+            } else {
+              fontKey = t.bold && t.italic ? 'HelveticaBoldOblique' : t.bold ? 'HelveticaBold' : t.italic ? 'HelveticaOblique' : 'Helvetica';
+            }
+            const fontObj = fonts[fontKey] || fonts.Helvetica;
+
+            const fontSizePt = (t.pdfFontSize && !t.customFontSize) ? t.pdfFontSize : Math.max(6, t.fontSize * scaleY);
+            const textLeftPt = t.x * scaleX + boxOffsetX;
+
+            // In preview, text is aligned with CSS top: t.y * coordRatio.
+            // Baseline is at (t.y + t.fontSize * 0.81) in canvas coordinates.
+            const baselineFromTop = (t.baselineY !== undefined && t.text === t.originalText)
+              ? t.baselineY
+              : (t.y + t.fontSize * 0.81);
+            const textBaselineY = pageHeight - (baselineFromTop * scaleY) + boxOffsetY;
+
+            const fg = hexToRgb(t.color || '#000000');
+            const safeText = sanitizeForPdfFont(t.text);
+
+            if (safeText) {
+              try {
+                page.drawText(safeText, {
+                  x: Math.max(0, textLeftPt),
+                  y: Math.max(0, textBaselineY),
+                  size: fontSizePt,
+                  font: fontObj,
+                  color: rgb(fg.r, fg.g, fg.b),
+                  lineHeight: fontSizePt * 1.15,
+                  opacity: 1.0
+                });
+              } catch (fontErr) {
+                console.warn('Encoding fallback for:', t.text, fontErr);
+              }
+            }
+          }
+        });
       }
 
-      const pngBytes = await (await fetch(canvas.toDataURL('image/png'))).arrayBuffer();
-      const embedded = await pdfDoc.embedPng(pngBytes);
-      const page = pdfDoc.addPage([pageWidth, pageHeight]);
-      page.drawImage(embedded, { x: 0, y: 0, width: pageWidth, height: pageHeight });
+      const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const blobUrl = URL.createObjectURL(blob);
+      downloadFile(blobUrl, `${getDocumentBaseName()}-edited.pdf`);
+      URL.revokeObjectURL(blobUrl);
+
+      setStatus('Exported PDF with 100% original quality and compact file size!');
+    } else {
+      // 2. High-Quality Standard Layout Mode (For image uploads & sample invoices):
+      const pdfDoc = await PDFDocument.create();
+
+      for (let i = 0; i < state.pages.length; i++) {
+        const p = state.pages[i];
+        setStatus(`Exporting page ${i + 1} of ${state.pages.length}…`, true);
+
+        const pageWidth = p.ptWidth || 595.28;
+        const pageHeight = p.ptHeight || 841.89;
+
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = p.width;
+        pageCanvas.height = p.height;
+        const ctx = pageCanvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        const baseImg = new Image();
+        baseImg.crossOrigin = 'anonymous';
+        await new Promise((resolve, reject) => {
+          baseImg.onload = resolve;
+          baseImg.onerror = reject;
+          baseImg.src = p.dataUrl;
+        });
+        ctx.drawImage(baseImg, 0, 0);
+
+        // Erase deleted items:
+        if (p.deletedItems && p.deletedItems.length) {
+          p.deletedItems.forEach(del => {
+            ctx.save();
+            ctx.fillStyle = del.bgColor || '#ffffff';
+            const delOrigW = Math.max(del.width, (del.originalText || del.text || '').length * del.fontSize * 0.68);
+            ctx.fillRect(Math.max(0, del.x - 2), Math.max(0, del.y - 2), delOrigW + 4, del.height + 4);
+            ctx.restore();
+          });
+        }
+
+        p.items.forEach(t => {
+          if (t.text && t.text.trim()) {
+            ctx.save();
+            if (((t.isEdited && t.text !== t.originalText) || t.isAdded) && t.bgColor && t.bgColor !== 'transparent') {
+              ctx.fillStyle = t.bgColor;
+              const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
+              ctx.fillRect(Math.max(0, t.x - 2), Math.max(0, t.y - 2), origW + 4, t.height + 4);
+            }
+            ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
+            ctx.fillStyle = t.color || '#000000';
+            ctx.textBaseline = 'top';
+            ctx.fillText(t.text, t.x, t.y);
+            ctx.restore();
+          }
+        });
+
+        const pngUrl = pageCanvas.toDataURL('image/png');
+        const res = await fetch(pngUrl);
+        const imgBuffer = await res.arrayBuffer();
+        const embeddedImg = await pdfDoc.embedPng(imgBuffer);
+
+        const page = pdfDoc.addPage([pageWidth, pageHeight]);
+        page.drawImage(embeddedImg, {
+          x: 0,
+          y: 0,
+          width: pageWidth,
+          height: pageHeight
+        });
+      }
+
+      const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const blobUrl = URL.createObjectURL(blob);
+      downloadFile(blobUrl, `${getDocumentBaseName()}-edited.pdf`);
+      URL.revokeObjectURL(blobUrl);
+
+      setStatus('Exported PDF successfully.');
     }
-
-    const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
-    const blobUrl = URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' }));
-    downloadFile(blobUrl, `${getDocumentBaseName()}-edited.pdf`);
-    URL.revokeObjectURL(blobUrl);
-
-    setStatus('Exported PDF successfully.');
   } catch (err) {
     console.error('PDF Export error:', err);
     setStatus(err.message || 'Failed to export PDF.');
