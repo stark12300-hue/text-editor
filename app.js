@@ -372,8 +372,9 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
   const bold = density > 0.20 || (width / Math.max(height,1) < 7 && density > 0.14);
 
   const candidates = ['Arial, sans-serif','Helvetica, Arial, sans-serif','Segoe UI, Arial, sans-serif','Roboto, Arial, sans-serif','Verdana, sans-serif','Trebuchet MS, sans-serif','Georgia, serif','Times New Roman, serif','Courier New, monospace'];
-  const targetH = Math.max(8, height);
-  const targetW = Math.max(8, width);
+  // Match the visible glyphs, not OCR-box padding.
+  const targetH = Math.max(8, inkHeight);
+  const targetW = Math.max(8, inkWidth);
   let bestFamily = 'Arial, sans-serif', bestSize = Math.max(8, Math.round(targetH)), bestSpacing = 0, bestScore = Infinity;
 
   if (sampleText && ctx && typeof ctx.measureText === 'function') {
@@ -393,7 +394,8 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
     ctx.font = `${bold ? '700 ' : '400 '}${bestSize}px ${bestFamily}`;
     const measured = Math.max(1, ctx.measureText(sampleText).width);
     ctx.restore();
-    bestSpacing = Math.max(-0.5, Math.min(2.5, (targetW - measured) / Math.max(1, sampleText.length)));
+    // Preserve the original glyph width with only a small tracking adjustment.
+    bestSpacing = Math.max(-0.35, Math.min(1.5, (targetW - measured) / Math.max(1, sampleText.length - 1)));
   }
   return {
     fontSize: Math.round(bestSize),
@@ -480,7 +482,8 @@ async function loadImageFile(file) {
         width,
         height,
         fontSize,
-        fontFamily: item.font_family || 'Arial, sans-serif',
+        // Use the family inferred from the actual raster pixels.
+        fontFamily: visualStyle.fontFamily || item.font_family || 'Arial, sans-serif',
         pdfFontType: 'Helvetica',
         color: textColor,
         bold: bold,
