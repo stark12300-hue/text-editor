@@ -526,30 +526,32 @@ async function loadImageFile(file) {
       const ocrResult = await worker.recognize(ocrCanvas, {}, { blocks: true });
       await worker.terminate();
 
-      const ocrLines = [];
+      const ocrWords = [];
       if (ocrResult.data?.blocks) {
         for (const block of ocrResult.data.blocks) {
           for (const para of (block.paragraphs || [])) {
             for (const line of (para.lines || [])) {
-              if (line.text?.trim()) ocrLines.push(line);
+              for (const word of (line.words || [])) {
+                if (word.text?.trim()) ocrWords.push(word);
+              }
             }
           }
         }
-      } else if (ocrResult.data?.lines) {
-        ocrLines.push(...ocrResult.data.lines);
+      } else if (ocrResult.data?.words) {
+        ocrWords.push(...ocrResult.data.words);
       }
 
-      for (const line of ocrLines) {
-        const text = line.text?.trim();
-        const conf = line.confidence;
-        const bbox = line.bbox;
-        if (!text || !bbox || (conf !== undefined && conf < 20)) continue;
+      for (const word of ocrWords) {
+        const text = word.text?.trim();
+        const conf = word.confidence;
+        const bbox = word.bbox;
+        if (!text || !bbox || (conf !== undefined && conf < 20) || !/[a-zA-Z0-9]/.test(text)) continue;
 
         const x = Math.max(0, Math.round(bbox.x0 / ocrScale));
         const y = Math.max(0, Math.round(bbox.y0 / ocrScale));
-        const width = Math.max(12, Math.round((bbox.x1 - bbox.x0) / ocrScale));
-        const height = Math.max(10, Math.round((bbox.y1 - bbox.y0) / ocrScale));
-        if (width < 8 || height < 6) continue;
+        const width = Math.max(8, Math.round((bbox.x1 - bbox.x0) / ocrScale));
+        const height = Math.max(8, Math.round((bbox.y1 - bbox.y0) / ocrScale));
+        if (width < 6 || height < 6) continue;
 
         const bgColor = sampleBackground(ctx, x, y, width, height);
         const textColor = getExactTextColorFromCanvas(ctx, x, y, width, height, bgColor);
