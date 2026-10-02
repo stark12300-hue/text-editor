@@ -372,17 +372,29 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
   const bold = density > 0.20 || (width / Math.max(height,1) < 7 && density > 0.14);
 
   const candidates = [
-    'Roboto, sans-serif',
     'Arial, sans-serif',
     'Helvetica, Arial, sans-serif',
-    'system-ui, sans-serif',
+    'Roboto, sans-serif',
+    'Inter, sans-serif',
+    'Open Sans, sans-serif',
+    'Lato, sans-serif',
+    'Montserrat, sans-serif',
+    'Poppins, sans-serif',
+    'Nunito, sans-serif',
+    'Raleway, sans-serif',
     'Segoe UI, Arial, sans-serif',
-    'Roboto, Arial, sans-serif',
     'Verdana, sans-serif',
+    'Tahoma, sans-serif',
+    'Calibri, sans-serif',
+    'Candara, sans-serif',
     'Trebuchet MS, sans-serif',
     'Georgia, serif',
     'Times New Roman, serif',
-    'Courier New, monospace'
+    'Garamond, serif',
+    'Merriweather, serif',
+    'Roboto Slab, serif',
+    'Courier New, monospace',
+    'Consolas, monospace'
   ];
   // Match visible glyphs, not OCR-box padding. Detect weight together with
   // the family so normal UI text is not accidentally rendered bold.
