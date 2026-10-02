@@ -1624,3 +1624,12 @@ input:checked + .slider-round:before {
   }
   .canvas-viewport { padding-bottom: 70px; }
 }
+
+
+/* Raster image OCR boxes stay invisible until the user interacts with text. */
+.document-stage-wrapper.image-mode .text-overlay:not(.selected):not(.editing):not(:hover) {
+  border-color: transparent !important;
+}
+.document-stage-wrapper.image-mode .text-overlay.edited:not(.selected):not(.editing):not(:hover) {
+  border-color: transparent !important;
+}
