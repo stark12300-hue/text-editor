@@ -1858,3 +1858,95 @@ input:checked + .slider-round:before {
   }
   .canvas-viewport { padding-bottom: 52px !important; }
 }
+
+
+/* Balanced phone UI sizing */
+@media (max-width: 768px) {
+  .top-header {
+    height: 82px !important;
+    min-height: 82px !important;
+    grid-template-rows: 41px 41px !important;
+    padding: 0 7px !important;
+  }
+  .brand-logo-img { width: 28px !important; height: 28px !important; }
+  .brand-title { font-size: 13px !important; }
+  .actions-zone { gap: 5px !important; padding: 3px 0 !important; }
+  .actions-zone .btn {
+    height: 32px !important;
+    min-height: 32px !important;
+    padding: 0 9px !important;
+    font-size: 10px !important;
+  }
+  .workspace-layout { height: calc(100vh - 82px) !important; }
+  .canvas-viewport { padding: 5px 5px 70px !important; }
+
+  .left-sidebar {
+    height: 62px !important;
+    max-height: 62px !important;
+  }
+  .left-sidebar .sidebar-content {
+    height: 62px !important;
+    padding: 6px 7px !important;
+    gap: 5px !important;
+  }
+  .left-sidebar .sidebar-section:first-child { gap: 5px !important; }
+  .left-sidebar .sidebar-section:first-child .btn,
+  .left-sidebar .sidebar-section:first-child .btn + .btn {
+    min-width: 82px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 7px !important;
+    font-size: 10px !important;
+  }
+  .left-sidebar .sidebar-section:nth-last-child(2) > div {
+    gap: 4px !important;
+  }
+  .left-sidebar .sidebar-section:nth-last-child(2) > div > .btn,
+  .left-sidebar .sidebar-section:nth-last-child(2) > div > #zoomLevel {
+    min-width: 38px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 6px !important;
+    font-size: 9px !important;
+  }
+}
+
+@media (max-width: 390px) {
+  .top-header {
+    height: 78px !important;
+    min-height: 78px !important;
+    grid-template-rows: 39px 39px !important;
+  }
+  .brand-logo-img { width: 26px !important; height: 26px !important; }
+  .brand-title { font-size: 12px !important; }
+  .actions-zone .btn {
+    height: 30px !important;
+    min-height: 30px !important;
+    padding: 0 8px !important;
+    font-size: 9.5px !important;
+  }
+  .workspace-layout { height: calc(100vh - 78px) !important; }
+  .left-sidebar {
+    height: 58px !important;
+    max-height: 58px !important;
+  }
+  .left-sidebar .sidebar-content {
+    height: 58px !important;
+    padding: 5px 6px !important;
+  }
+  .left-sidebar .sidebar-section:first-child .btn,
+  .left-sidebar .sidebar-section:first-child .btn + .btn {
+    min-width: 72px !important;
+    height: 39px !important;
+    min-height: 39px !important;
+    font-size: 9px !important;
+  }
+  .left-sidebar .sidebar-section:nth-last-child(2) > div > .btn,
+  .left-sidebar .sidebar-section:nth-last-child(2) > div > #zoomLevel {
+    min-width: 34px !important;
+    height: 39px !important;
+    min-height: 39px !important;
+    font-size: 8.5px !important;
+  }
+  .canvas-viewport { padding-bottom: 65px !important; }
+}
