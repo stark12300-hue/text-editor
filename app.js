@@ -2226,7 +2226,6 @@ function activateDirectEditing(el, item) {
       }
 
       // Solidly erase original ink from canvas image so zero ghosting remains
-      const current = getCurrentPage();
       if (current) {
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = current.width;
