@@ -953,6 +953,82 @@ function refineImageItemStyle(ctx, item) {
   }
 }
 
+// Remove the original text inside a box WITHOUT leaving a flat patch: every row is filled by blending
+// the clean pixels just left and right of the box (works on flat colours, gradients and photos).
+function eraseImageTextBox(ctx, t) {
+  try {
+    const r = getImageMaskRect(t);
+    const W = ctx.canvas.width, H = ctx.canvas.height;
+    const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y));
+    const x1 = Math.min(W, Math.ceil(r.x + r.w)), y1 = Math.min(H, Math.ceil(r.y + r.h));
+    const w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return;
+
+    const bg = hexToRgb(t.bgColor || '#ffffff');
+    const bgc = [Math.round(bg.r * 255), Math.round(bg.g * 255), Math.round(bg.b * 255)];
+    const near = c => Math.abs(c[0] - bgc[0]) + Math.abs(c[1] - bgc[1]) + Math.abs(c[2] - bgc[2]) <= 150;
+
+    const strip = (x) => {
+      if (x < 0 || x >= W) return null;
+      const d = ctx.getImageData(x, y0, 1, h).data;
+      const out = [];
+      for (let j = 0; j < h; j++) out.push([d[j * 4], d[j * 4 + 1], d[j * 4 + 2]]);
+      return out;
+    };
+    const L = strip(x0 - 2), R = strip(x1 + 1);
+    const pick = (a, b, j) => {
+      if (a && near(a[j])) return a[j];
+      if (b && near(b[j])) return b[j];
+      return bgc;
+    };
+    const lc = [], rc = [];
+    for (let j = 0; j < h; j++) { lc.push(pick(L, R, j)); rc.push(pick(R, L, j)); }
+    // smooth vertically so JPEG noise on the edge pixels doesn't create stripes
+    const smooth = arr => arr.map((_, j) => {
+      let a = 0, b = 0, c = 0, n = 0;
+      for (let k = Math.max(0, j - 2); k <= Math.min(h - 1, j + 2); k++) { a += arr[k][0]; b += arr[k][1]; c += arr[k][2]; n++; }
+      return [a / n, b / n, c / n];
+    });
+    const ls = smooth(lc), rs = smooth(rc);
+
+    const img = ctx.createImageData(w, h);
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        const u = (i + 0.5) / w, p = (j * w + i) * 4;
+        img.data[p] = ls[j][0] * (1 - u) + rs[j][0] * u;
+        img.data[p + 1] = ls[j][1] * (1 - u) + rs[j][1] * u;
+        img.data[p + 2] = ls[j][2] * (1 - u) + rs[j][2] * u;
+        img.data[p + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, x0, y0);
+  } catch (e) {
+    ctx.save();
+    ctx.fillStyle = t.bgColor || '#ffffff';
+    const r = getImageMaskRect(t);
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.restore();
+  }
+}
+
+// Image mode export: base image is untouched; only deleted/edited/added items change it.
+function drawImageEdits(ctx, page) {
+  (page.deletedItems || []).forEach(del => eraseImageTextBox(ctx, del));
+  (page.items || []).forEach(t => {
+    const edited = (t.isEdited && t.text !== t.originalText) || t.isAdded;
+    if (!edited) return;                       // unchanged text stays exactly as in the original pixels
+    if (t.bgColor && t.bgColor !== 'transparent') eraseImageTextBox(ctx, t);
+    if (!t.text || !t.text.trim()) return;
+    ctx.save();
+    ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
+    ctx.fillStyle = t.color || '#000000';
+    ctx.textBaseline = 'alphabetic';
+    const base = t.y + getImageBaseline(t);
+    t.text.split('\n').forEach((line, i) => ctx.fillText(line, t.x, base + i * t.fontSize * 1.15));
+    ctx.restore();
+  });
+}
+
 // Baseline (distance from box top) used by both the on-screen overlay and the PNG export
 function getImageBaseline(t) {
   return (typeof t.baseline === 'number') ? t.baseline : (t.height / 2 + t.fontSize * 0.3465);
@@ -976,7 +1052,7 @@ function getImageLineHeightPx(t) {
 // Image mode: area that must be covered when the original text is edited/deleted.
 // Uses the OCR box (+ small pad) only, so neighbouring content is never wiped.
 function getImageMaskRect(t) {
-  const pad = Math.max(2, Math.round(t.height * 0.1));
+  const pad = Math.max(3, Math.round(t.height * 0.15));
   return {
     x: Math.max(0, t.x - pad),
     y: Math.max(0, t.y - pad),
@@ -2590,49 +2666,53 @@ $('exportImageBtn').onclick = async () => {
     });
     ctx.drawImage(baseImg, 0, 0);
 
-    // Erase deleted items
-    if (current.deletedItems && current.deletedItems.length) {
-      current.deletedItems.forEach(del => {
-        ctx.save();
-        ctx.fillStyle = del.bgColor || '#ffffff';
-        if (state.mode === 'image') {
-          const r = getImageMaskRect(del);
-          ctx.fillRect(r.x, r.y, r.w, r.h);
-        } else {
-          const origW = Math.max(del.width, (del.originalText || del.text || '').length * del.fontSize * 0.68);
-          ctx.fillRect(Math.max(0, del.x - 2), Math.max(0, del.y - 2), origW + 4, del.height + 4);
-        }
-        ctx.restore();
-      });
-    }
-
-    current.items.forEach(t => {
-      const isEdited = (t.isEdited && t.text !== t.originalText) || t.isAdded;
-      if (isEdited && t.text && t.text.trim()) {
-        ctx.save();
-        if (t.bgColor && t.bgColor !== 'transparent') {
-          ctx.fillStyle = t.bgColor;
+    if (state.mode === 'image') {
+      drawImageEdits(ctx, current);
+    } else {
+      // Erase deleted items
+      if (current.deletedItems && current.deletedItems.length) {
+        current.deletedItems.forEach(del => {
+          ctx.save();
+          ctx.fillStyle = del.bgColor || '#ffffff';
           if (state.mode === 'image') {
-            const r = getImageMaskRect(t);
+            const r = getImageMaskRect(del);
             ctx.fillRect(r.x, r.y, r.w, r.h);
           } else {
-            const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
-            ctx.fillRect(Math.max(0, t.x - 2), Math.max(0, t.y - 2), origW + 4, t.height + 4);
+            const origW = Math.max(del.width, (del.originalText || del.text || '').length * del.fontSize * 0.68);
+            ctx.fillRect(Math.max(0, del.x - 2), Math.max(0, del.y - 2), origW + 4, del.height + 4);
           }
-        }
-        ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
-        ctx.fillStyle = t.color || '#000000';
-        if (state.mode === 'image') {
-          // Same baseline as the on-screen overlay and as the original text
-          ctx.textBaseline = 'alphabetic';
-          ctx.fillText(t.text, t.x, t.y + getImageBaseline(t));
-        } else {
-          ctx.textBaseline = 'top';
-          ctx.fillText(t.text, t.x, t.y);
-        }
-        ctx.restore();
+          ctx.restore();
+        });
       }
-    });
+
+      current.items.forEach(t => {
+        const isEdited = (t.isEdited && t.text !== t.originalText) || t.isAdded;
+        if (isEdited && t.text && t.text.trim()) {
+          ctx.save();
+          if (t.bgColor && t.bgColor !== 'transparent') {
+            ctx.fillStyle = t.bgColor;
+            if (state.mode === 'image') {
+              const r = getImageMaskRect(t);
+              ctx.fillRect(r.x, r.y, r.w, r.h);
+            } else {
+              const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
+              ctx.fillRect(Math.max(0, t.x - 2), Math.max(0, t.y - 2), origW + 4, t.height + 4);
+            }
+          }
+          ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
+          ctx.fillStyle = t.color || '#000000';
+          if (state.mode === 'image') {
+            // Same baseline as the on-screen overlay and as the original text
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillText(t.text, t.x, t.y + getImageBaseline(t));
+          } else {
+            ctx.textBaseline = 'top';
+            ctx.fillText(t.text, t.x, t.y);
+          }
+          ctx.restore();
+        }
+      });
+    }
 
     const exportUrl = canvas.toDataURL('image/png');
     downloadFile(exportUrl, `${getDocumentBaseName()}-edited.png`);
@@ -2710,37 +2790,8 @@ $('exportPdfBtn').onclick = async () => {
           ctx.restore();
         }
       } else {
-        // Image uploads start from a pristine image.
-        if (p.deletedItems && p.deletedItems.length) {
-          for (const del of p.deletedItems) {
-            ctx.save();
-            ctx.fillStyle = del.bgColor || '#ffffff';
-            const delOrigW = Math.max(
-              del.width,
-              (del.originalText || del.text || '').length * del.fontSize * 0.68
-            );
-            ctx.fillRect(Math.max(0, del.x - 2), Math.max(0, del.y - 2), delOrigW + 4, del.height + 4);
-            ctx.restore();
-          }
-        }
-
-        for (const t of (p.items || [])) {
-          if (!t.text || !t.text.trim()) continue;
-
-          ctx.save();
-          const isEdited = !!t.isEdited && t.text !== t.originalText;
-          if ((isEdited || t.isAdded) && t.bgColor && t.bgColor !== 'transparent') {
-            ctx.fillStyle = t.bgColor;
-            const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
-            ctx.fillRect(Math.max(0, t.x - 2), Math.max(0, t.y - 2), origW + 4, t.height + 4);
-          }
-
-          ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
-          ctx.fillStyle = t.color || '#000000';
-          ctx.textBaseline = 'top';
-          ctx.fillText(t.text, t.x, t.y);
-          ctx.restore();
-        }
+        // Image uploads start from a pristine image; only edited/added/deleted text changes it.
+        drawImageEdits(ctx, p);
       }
 
       const pngBytes = await (await fetch(canvas.toDataURL('image/png'))).arrayBuffer();
