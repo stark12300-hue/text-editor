@@ -481,7 +481,9 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
     italic: false,
     letterSpacing: bestSpacing,
     sourceInkWidth: inkWidth,
-    sourceInkHeight: inkHeight
+    sourceInkHeight: inkHeight,
+    sourceInkOffsetX: inkMinX >= 0 ? inkMinX : 0,
+    sourceInkOffsetY: inkMinY >= 0 ? inkMinY : 0
   };
 }
 async function loadImageFile(file) {
@@ -574,7 +576,11 @@ async function loadImageFile(file) {
         pageNum: 1,
         isEdited: false,
         isAdded: false,
-        confidence: item.confidence
+        confidence: item.confidence,
+        sourceInkWidth: visualStyle.sourceInkWidth,
+        sourceInkHeight: visualStyle.sourceInkHeight,
+        sourceInkOffsetX: visualStyle.sourceInkOffsetX,
+        sourceInkOffsetY: visualStyle.sourceInkOffsetY
       });
     });
   }
@@ -1692,21 +1698,35 @@ function renderPagesList() {
 }
 
 // Stage Rendering: Clean background image with perfectly non-overlapping text overlays
-function getImageReplacementScaleY(item) {
-  if (state.mode !== 'image' || !item?.sourceInkHeight || !item.text) return 1;
+function getImageReplacementTransform(item) {
+  if (state.mode !== 'image' || !item?.text) return { sx: 1, sy: 1, dx: 0, dy: 0 };
   try {
     const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    ctx.font = `${item.italic ? 'italic ' : ''}${item.bold ? '700 ' : '400 '}${item.fontSize}px ${item.fontFamily || 'Arial, sans-serif'}`;
-    const m = ctx.measureText(item.text);
-    const renderedInkHeight = Math.max(1, (m.actualBoundingBoxAscent || item.fontSize * 0.75) + (m.actualBoundingBoxDescent || item.fontSize * 0.2));
-    const scale = item.sourceInkHeight / renderedInkHeight;
-    return Math.max(0.8, Math.min(1.8, scale));
-  } catch (_) {
-    return 1;
-  }
+    canvas.width = 1200; canvas.height = 300;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return { sx: 1, sy: 1, dx: 0, dy: 0 };
+    const weight = item.fontWeight || (item.bold ? 700 : 400);
+    ctx.font = (item.italic ? 'italic ' : '') + weight + 'px ' + (item.fontFamily || 'Arial, sans-serif');
+    ctx.textBaseline = 'top'; ctx.fillStyle = '#000';
+    ctx.fillText(item.text, 20, 20);
+    const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let minX=canvas.width, minY=canvas.height, maxX=-1, maxY=-1;
+    for (let y=0;y<canvas.height;y++) for (let x=0;x<canvas.width;x++) {
+      const i=(y*canvas.width+x)*4;
+      if (d[i]<245 || d[i+1]<245 || d[i+2]<245) {
+        minX=Math.min(minX,x); minY=Math.min(minY,y); maxX=Math.max(maxX,x); maxY=Math.max(maxY,y);
+      }
+    }
+    if (maxX<minX || maxY<minY) return { sx:1, sy:1, dx:0, dy:0 };
+    const renderedW=maxX-minX+1, renderedH=maxY-minY+1;
+    const sx=item.sourceInkWidth ? Math.max(0.75,Math.min(1.30,item.sourceInkWidth/renderedW)) : 1;
+    const sy=item.sourceInkHeight ? Math.max(0.80,Math.min(1.30,item.sourceInkHeight/renderedH)) : 1;
+    const sourceX=item.sourceInkOffsetX || 0, sourceY=item.sourceInkOffsetY || 0;
+    const renderedX=Math.max(0,minX-20), renderedY=Math.max(0,minY-20);
+    const dx=sourceX-renderedX*sx, dy=sourceY-renderedY*sy;
+    return { sx, sy, dx, dy };
+  } catch (_) { return { sx:1, sy:1, dx:0, dy:0 }; }
 }
-
 function renderStage() {
   const emptyState = $('emptyState');
   const stageWrapper = $('stageWrapper');
@@ -1823,9 +1843,9 @@ function renderStage() {
     el.style.padding = state.mode === 'image' ? '0' : '0 1px';
     el.style.letterSpacing = state.mode === 'image' ? `${t.letterSpacing || 0}px` : '0px';
     if (state.mode === 'image' && isEdited) {
-      const sy = getImageReplacementScaleY(t);
+      const tr = getImageReplacementTransform(t);
       el.style.transformOrigin = 'left top';
-      el.style.transform = `scaleY(${sy})`;
+      el.style.transform = `translate(${tr.dx * coordRatio}px, ${tr.dy * coordRatio}px) scaleX(${tr.sx}) scaleY(${tr.sy})`;
     } else {
       el.style.transform = 'none';
     }
