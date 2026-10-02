@@ -1001,6 +1001,31 @@ function eraseImageTextBox(ctx, t) {
         img.data[p + 3] = 255;
       }
     }
+    // Keep the original pixels (texture / JPEG grain / photo detail) everywhere except around the old glyphs
+    const orig = ctx.getImageData(x0, y0, w, h).data;
+    let ink = new Uint8Array(w * h);
+    for (let p = 0; p < w * h; p++) {
+      const q = p * 4;
+      const d = Math.abs(orig[q] - img.data[q]) + Math.abs(orig[q + 1] - img.data[q + 1]) + Math.abs(orig[q + 2] - img.data[q + 2]);
+      ink[p] = d > 28 ? 1 : 0;
+    }
+    const dilate = (src) => {   // 3x3 grow, so anti-aliased glyph edges are removed too
+      const tmp = new Uint8Array(w * h), out = new Uint8Array(w * h);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        if (src[y * w + x] || (x > 0 && src[y * w + x - 1]) || (x < w - 1 && src[y * w + x + 1])) tmp[y * w + x] = 1;
+      }
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        if (tmp[y * w + x] || (y > 0 && tmp[(y - 1) * w + x]) || (y < h - 1 && tmp[(y + 1) * w + x])) out[y * w + x] = 1;
+      }
+      return out;
+    };
+    ink = dilate(dilate(ink));
+    for (let p = 0; p < w * h; p++) {
+      if (!ink[p]) {
+        const q = p * 4;
+        img.data[q] = orig[q]; img.data[q + 1] = orig[q + 1]; img.data[q + 2] = orig[q + 2]; img.data[q + 3] = 255;
+      }
+    }
     ctx.putImageData(img, x0, y0);
   } catch (e) {
     ctx.save();
@@ -1012,13 +1037,21 @@ function eraseImageTextBox(ctx, t) {
 }
 
 // Image mode export: base image is untouched; only deleted/edited/added items change it.
-function drawImageEdits(ctx, page) {
+// Can this item be written as real PDF text with a built-in PDF font (Helvetica/Times/Courier)?
+function isPdfVectorSafe(t) {
+  if (!/arial|helvetica|times|courier/i.test(t.fontFamily || 'Arial')) return false;
+  if (/georgia|trebuchet/i.test(t.fontFamily || '')) return false;
+  return sanitizeForPdfFont(t.text.replace(/\n/g, ' ')) === t.text.replace(/\n/g, ' ');
+}
+
+function drawImageEdits(ctx, page, vectorList) {
   (page.deletedItems || []).forEach(del => eraseImageTextBox(ctx, del));
   (page.items || []).forEach(t => {
     const edited = (t.isEdited && t.text !== t.originalText) || t.isAdded;
     if (!edited) return;                       // unchanged text stays exactly as in the original pixels
     if (t.bgColor && t.bgColor !== 'transparent') eraseImageTextBox(ctx, t);
     if (!t.text || !t.text.trim()) return;
+    if (vectorList && isPdfVectorSafe(t)) { vectorList.push(t); return; }   // drawn later as real PDF text
     ctx.save();
     ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
     ctx.fillStyle = t.color || '#000000';
@@ -2739,6 +2772,7 @@ $('exportPdfBtn').onclick = async () => {
   try {
     const { PDFDocument } = PDFLib;
     const pdfDoc = await PDFDocument.create();
+    const pdfFontCache = {};
 
     for (let i = 0; i < state.pages.length; i++) {
       const p = state.pages[i];
@@ -2764,6 +2798,8 @@ $('exportPdfBtn').onclick = async () => {
       });
 
       ctx.drawImage(baseImg, 0, 0, p.width, p.height);
+
+      const vectorTexts = [];
 
       if (state.originalPdfBytes) {
         // PDF text has already been erased from p.dataUrl. Draw the current
@@ -2791,13 +2827,42 @@ $('exportPdfBtn').onclick = async () => {
         }
       } else {
         // Image uploads start from a pristine image; only edited/added/deleted text changes it.
-        drawImageEdits(ctx, p);
+        drawImageEdits(ctx, p, vectorTexts);
       }
 
       const pngBytes = await (await fetch(canvas.toDataURL('image/png'))).arrayBuffer();
       const embedded = await pdfDoc.embedPng(pngBytes);
       const page = pdfDoc.addPage([pageWidth, pageHeight]);
       page.drawImage(embedded, { x: 0, y: 0, width: pageWidth, height: pageHeight });
+
+      // Edited text of image uploads is written as real, selectable, always-sharp PDF text
+      if (vectorTexts.length) {
+        const kx = pageWidth / p.width, ky = pageHeight / p.height;
+        for (const t of vectorTexts) {
+          try {
+            const fam = /courier/i.test(t.fontFamily) ? 'Courier' : (/times/i.test(t.fontFamily) ? 'TimesRoman' : 'Helvetica');
+            let key;
+            if (fam === 'Helvetica') key = 'Helvetica' + (t.bold ? 'Bold' : '') + (t.italic ? 'Oblique' : '');
+            else if (fam === 'TimesRoman') key = 'TimesRoman' + (t.bold ? 'Bold' : '') + (t.italic ? 'Italic' : '');
+            else key = 'Courier' + (t.bold ? 'Bold' : '') + (t.italic ? 'Oblique' : '');
+            if (!pdfFontCache[key]) pdfFontCache[key] = await pdfDoc.embedFont(PDFLib.StandardFonts[key]);
+            const rgbc = hexToRgb(t.color || '#000000');
+            const base = t.y + getImageBaseline(t);
+            t.text.split('\n').forEach((line, li) => {
+              if (!line) return;
+              page.drawText(line, {
+                x: t.x * kx,
+                y: pageHeight - (base + li * t.fontSize * 1.15) * ky,
+                size: Math.max(1, t.fontSize * ky),
+                font: pdfFontCache[key],
+                color: PDFLib.rgb(rgbc.r, rgbc.g, rgbc.b)
+              });
+            });
+          } catch (e) {
+            console.warn('Vector text failed, skipped:', e && e.message);
+          }
+        }
+      }
     }
 
     const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
