@@ -1726,3 +1726,135 @@ input:checked + .slider-round:before {
   .left-sidebar .sidebar-section:nth-last-child(2) > div > #zoomLevel { height: 32px !important; min-height: 32px; font-size: 8.5px !important; }
   .canvas-viewport { padding-bottom: 88px; }
 }
+
+
+/* FINAL phone-size override: keep the editor compact on narrow screens */
+@media (max-width: 768px) {
+  .top-header {
+    height: 72px !important;
+    min-height: 72px !important;
+    grid-template-rows: 36px 36px !important;
+    padding: 0 5px !important;
+  }
+  .brand-zone { gap: 5px !important; }
+  .brand-logo-img { width: 24px !important; height: 24px !important; }
+  .brand-title { font-size: 11px !important; }
+  .actions-zone {
+    gap: 3px !important;
+    padding: 2px 0 !important;
+  }
+  .actions-zone .btn {
+    height: 28px !important;
+    min-height: 28px !important;
+    padding: 0 6px !important;
+    font-size: 9px !important;
+  }
+
+  .workspace-layout {
+    height: calc(100vh - 72px) !important;
+  }
+
+  .canvas-viewport {
+    padding: 3px 3px 58px !important;
+  }
+
+  .left-sidebar {
+    height: 50px !important;
+    max-height: 50px !important;
+    overflow: hidden !important;
+  }
+  .left-sidebar .sidebar-content {
+    height: 50px !important;
+    padding: 3px 4px !important;
+    gap: 3px !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+  }
+
+  .left-sidebar .sidebar-section:first-child {
+    gap: 3px !important;
+  }
+  .left-sidebar .sidebar-section:first-child .btn,
+  .left-sidebar .sidebar-section:first-child .btn + .btn {
+    min-width: 62px !important;
+    width: auto !important;
+    height: 34px !important;
+    min-height: 34px !important;
+    padding: 0 5px !important;
+    font-size: 8px !important;
+  }
+
+  .left-sidebar .sidebar-section:nth-last-child(2) {
+    display: flex !important;
+  }
+  .left-sidebar .sidebar-section:nth-last-child(2) > div {
+    gap: 3px !important;
+  }
+  .left-sidebar .sidebar-section:nth-last-child(2) > div > .btn,
+  .left-sidebar .sidebar-section:nth-last-child(2) > div > #zoomLevel {
+    min-width: 30px !important;
+    height: 34px !important;
+    min-height: 34px !important;
+    padding: 0 4px !important;
+    font-size: 8px !important;
+  }
+
+  .left-sidebar .sidebar-section:last-child,
+  .left-sidebar #pagesSection {
+    display: none !important;
+  }
+
+  .canvas-floating-bar {
+    top: 3px !important;
+    left: 3px !important;
+    right: 3px !important;
+  }
+
+  .empty-state-card {
+    width: calc(100vw - 12px) !important;
+    padding: 14px 9px !important;
+    gap: 7px !important;
+  }
+  .empty-state-logo-wrap { width: 54px !important; height: 54px !important; }
+  .empty-state-logo-img { width: 48px !important; height: 48px !important; }
+  .empty-state-title { font-size: 13px !important; }
+  .empty-state-desc { font-size: 9.5px !important; }
+
+  .scan-banner {
+    top: 40px !important;
+    max-width: calc(100vw - 8px) !important;
+    padding: 4px 6px !important;
+    font-size: 8px !important;
+  }
+}
+
+@media (max-width: 390px) {
+  .top-header {
+    height: 68px !important;
+    min-height: 68px !important;
+    grid-template-rows: 34px 34px !important;
+  }
+  .workspace-layout { height: calc(100vh - 68px) !important; }
+  .actions-zone .btn {
+    height: 26px !important;
+    min-height: 26px !important;
+    font-size: 8.5px !important;
+    padding: 0 5px !important;
+  }
+  .left-sidebar,
+  .left-sidebar .sidebar-content {
+    height: 46px !important;
+    max-height: 46px !important;
+  }
+  .left-sidebar .sidebar-section:first-child .btn,
+  .left-sidebar .sidebar-section:first-child .btn + .btn,
+  .left-sidebar .sidebar-section:nth-last-child(2) > div > .btn,
+  .left-sidebar .sidebar-section:nth-last-child(2) > div > #zoomLevel {
+    height: 30px !important;
+    min-height: 30px !important;
+    min-width: 28px !important;
+    font-size: 7.5px !important;
+  }
+  .canvas-viewport { padding-bottom: 52px !important; }
+}
