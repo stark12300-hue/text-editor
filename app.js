@@ -21,6 +21,17 @@ const state = {
   historyIndex: -1
 };
 
+// Feature switches for image editing, so any one of them can be turned off to compare quality:
+//   ?smartStyle=0  -> don't auto-detect font/bold/italic/baseline from the original pixels
+//   ?smartErase=0  -> erase old text with a plain flat-colour rectangle (old behaviour)
+//   ?vectorPdf=1   -> write edited text in PDF exports as real PDF text (default: pixels, identical to the PNG)
+const _qs = new URLSearchParams(location.search);
+const FLAGS = {
+  smartStyle: _qs.get('smartStyle') !== '0',
+  smartErase: _qs.get('smartErase') !== '0',
+  vectorPdf: _qs.get('vectorPdf') === '1'
+};
+
 // Helper selector & id generator
 const $ = id => document.getElementById(id);
 const uid = () => Math.random().toString(36).substring(2, 10);
@@ -850,11 +861,12 @@ function detectItalicFromMask(mask, w, h, bx0, by0, bx1, by1) {
     const sc = score(sh);
     if (sc > best) { best = sc; bestS = sh; }
   }
-  return bestS >= 0.2 && best > base * 1.08;
+  return bestS >= 0.2 && best > base * 1.12;
 }
 
 // Reads the original glyph pixels and sets fontFamily / bold / italic / fontSize / box / baseline on the item.
 function refineImageItemStyle(ctx, item) {
+  if (!FLAGS.smartStyle) return;
   try {
     const text = (item.originalText || item.text || '').trim();
     if (!text) return;
@@ -908,9 +920,9 @@ function refineImageItemStyle(ctx, item) {
       }
     }
     let bold = !!item.bold;
-    if (F0 >= 14 && runs.length >= 5) {
+    if (F0 >= 16 && runs.length >= 5) {
       runs.sort((a, b) => a - b);
-      bold = runs[Math.floor(runs.length / 2)] / F0 > 0.125;
+      bold = runs[Math.floor(runs.length / 2)] / F0 > 0.14;
     }
 
     // --- italic
@@ -929,7 +941,7 @@ function refineImageItemStyle(ctx, item) {
         const mt = measureInkMetrics(text, c.css, bold, italic);
         if (!mt) continue;
         const e = errOf(mt);
-        if (e < bestErr) { bestErr = e; if (e < arialErr - 0.06) { chosen = c; metrics = mt; } }
+        if (e < bestErr) { bestErr = e; if (e < arialErr - 0.10) { chosen = c; metrics = mt; } }
       }
     }
     const Fh = inkH * 100 / (metrics.asc + metrics.desc);
@@ -956,6 +968,14 @@ function refineImageItemStyle(ctx, item) {
 // Remove the original text inside a box WITHOUT leaving a flat patch: every row is filled by blending
 // the clean pixels just left and right of the box (works on flat colours, gradients and photos).
 function eraseImageTextBox(ctx, t) {
+  if (!FLAGS.smartErase) {
+    ctx.save();
+    ctx.fillStyle = t.bgColor || '#ffffff';
+    const fr = getImageMaskRect(t);
+    ctx.fillRect(fr.x, fr.y, fr.w, fr.h);
+    ctx.restore();
+    return;
+  }
   try {
     const r = getImageMaskRect(t);
     const W = ctx.canvas.width, H = ctx.canvas.height;
@@ -2749,7 +2769,8 @@ $('exportImageBtn').onclick = async () => {
 
     const exportUrl = canvas.toDataURL('image/png');
     downloadFile(exportUrl, `${getDocumentBaseName()}-edited.png`);
-    setStatus('Exported PNG in high resolution.');
+    console.info('[export png]', { width: canvas.width, height: canvas.height, mode: state.mode, flags: FLAGS });
+    setStatus(`Exported PNG ${canvas.width}×${canvas.height}px (full original resolution).`);
   } catch (err) {
     console.error('PNG Export failed:', err);
     setStatus('Failed to export PNG.');
@@ -2827,7 +2848,7 @@ $('exportPdfBtn').onclick = async () => {
         }
       } else {
         // Image uploads start from a pristine image; only edited/added/deleted text changes it.
-        drawImageEdits(ctx, p, vectorTexts);
+        drawImageEdits(ctx, p, FLAGS.vectorPdf ? vectorTexts : null);
       }
 
       const pngBytes = await (await fetch(canvas.toDataURL('image/png'))).arrayBuffer();
