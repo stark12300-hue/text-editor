@@ -371,63 +371,99 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
   const inkHeight = inkMaxY >= inkMinY ? (inkMaxY - inkMinY + 1) : safeH;
   const bold = density > 0.20 || (width / Math.max(height,1) < 7 && density > 0.14);
 
-  const candidates = ['Arial, sans-serif','Helvetica, Arial, sans-serif','Segoe UI, Arial, sans-serif','Roboto, Arial, sans-serif','Verdana, sans-serif','Trebuchet MS, sans-serif','Georgia, serif','Times New Roman, serif','Courier New, monospace'];
-  // Match the visible glyphs, not OCR-box padding.
+  const candidates = [
+    'Roboto, sans-serif',
+    'Arial, sans-serif',
+    'Helvetica, Arial, sans-serif',
+    'system-ui, sans-serif',
+    'Segoe UI, Arial, sans-serif',
+    'Roboto, Arial, sans-serif',
+    'Verdana, sans-serif',
+    'Trebuchet MS, sans-serif',
+    'Georgia, serif',
+    'Times New Roman, serif',
+    'Courier New, monospace'
+  ];
+  // Match visible glyphs, not OCR-box padding. Detect weight together with
+  // the family so normal UI text is not accidentally rendered bold.
   const targetH = Math.max(8, inkHeight);
   const targetW = Math.max(8, inkWidth);
-  let bestFamily = 'Arial, sans-serif', bestSize = Math.max(8, Math.round(targetH)), bestSpacing = 0, bestScore = Infinity;
+  let bestFamily = 'Arial, sans-serif';
+  let bestWeight = 400;
+  let bestSize = Math.max(8, Math.round(targetH));
+  let bestSpacing = 0;
+  let bestScore = Infinity;
 
   if (sampleText && ctx && typeof ctx.measureText === 'function') {
-    // Compare candidate fonts against actual raster glyph geometry and density.
     const probeCanvas = document.createElement('canvas');
-    probeCanvas.width = 700;
-    probeCanvas.height = 220;
+    probeCanvas.width = 900;
+    probeCanvas.height = 260;
     const probeCtx = probeCanvas.getContext('2d', { willReadFrequently: true });
 
     for (const family of candidates) {
-      ctx.save();
-      ctx.font = `${bold ? '700 ' : '400 '}100px ${family}`;
-      const probe = ctx.measureText(sampleText);
-      const glyphH = Math.max(1, (probe.actualBoundingBoxAscent || 75) + (probe.actualBoundingBoxDescent || 20));
-      const size = Math.max(8, Math.min(180, 100 * targetH / glyphH));
-      ctx.font = `${bold ? '700 ' : '400 '}${size}px ${family}`;
-      const measured = Math.max(1, ctx.measureText(sampleText).width);
+      for (const weight of [400, 700]) {
+        ctx.save();
+        ctx.font = `${weight} 100px ${family}`;
+        const probe = ctx.measureText(sampleText);
+        const glyphH = Math.max(1, (probe.actualBoundingBoxAscent || 75) + (probe.actualBoundingBoxDescent || 20));
+        const size = Math.max(8, Math.min(180, 100 * targetH / glyphH));
+        ctx.font = `${weight} ${size}px ${family}`;
+        const measured = Math.max(1, ctx.measureText(sampleText).width);
 
-      let densityScore = 0;
-      if (probeCtx) {
-        probeCtx.clearRect(0, 0, probeCanvas.width, probeCanvas.height);
-        probeCtx.fillStyle = '#fff';
-        probeCtx.fillRect(0, 0, probeCanvas.width, probeCanvas.height);
-        probeCtx.fillStyle = '#000';
-        probeCtx.font = `${bold ? '700 ' : '400 '}${size}px ${family}`;
-        probeCtx.textBaseline = 'top';
-        probeCtx.fillText(sampleText, 8, 8);
-        const pd = probeCtx.getImageData(0, 0, probeCanvas.width, probeCanvas.height).data;
-        let pInk = 0;
-        for (let i = 0; i < pd.length; i += 4) {
-          if (pd[i] < 245 || pd[i + 1] < 245 || pd[i + 2] < 245) pInk++;
+        let densityScore = 0;
+        if (probeCtx) {
+          probeCtx.clearRect(0, 0, probeCanvas.width, probeCanvas.height);
+          probeCtx.fillStyle = '#fff';
+          probeCtx.fillRect(0, 0, probeCanvas.width, probeCanvas.height);
+          probeCtx.fillStyle = '#000';
+          probeCtx.font = `${weight} ${size}px ${family}`;
+          probeCtx.textBaseline = 'top';
+          probeCtx.fillText(sampleText, 8, 8);
+
+          const pd = probeCtx.getImageData(0, 0, probeCanvas.width, probeCanvas.height).data;
+          let pInk = 0;
+          let pMinX = probeCanvas.width, pMaxX = -1;
+          let pMinY = probeCanvas.height, pMaxY = -1;
+          for (let py = 0; py < probeCanvas.height; py++) {
+            for (let px = 0; px < probeCanvas.width; px++) {
+              const i = (py * probeCanvas.width + px) * 4;
+              if (pd[i] < 245 || pd[i + 1] < 245 || pd[i + 2] < 245) {
+                pInk++;
+                pMinX = Math.min(pMinX, px); pMaxX = Math.max(pMaxX, px);
+                pMinY = Math.min(pMinY, py); pMaxY = Math.max(pMaxY, py);
+              }
+            }
+          }
+          const renderedDensity = pInk / (probeCanvas.width * probeCanvas.height);
+          const renderedInkHeight = pMaxY >= pMinY ? pMaxY - pMinY + 1 : targetH;
+          const sourceDensity = dark / Math.max(1, total);
+          const densityTerm = Math.abs(Math.log((renderedDensity + 0.0001) / (sourceDensity + 0.0001)));
+          const heightTerm = Math.abs(Math.log(renderedInkHeight / Math.max(1, targetH)));
+          densityScore = densityTerm + heightTerm * 0.35;
         }
-        const renderedDensity = pInk / (probeCanvas.width * probeCanvas.height);
-        const sourceDensity = dark / Math.max(1, total);
-        densityScore = Math.abs(Math.log((renderedDensity + 0.0001) / (sourceDensity + 0.0001)));
-      }
 
-      ctx.restore();
-      const widthScore = Math.abs(Math.log(measured / targetW));
-      const score = widthScore * 0.72 + densityScore * 0.28;
-      if (score < bestScore) { bestScore = score; bestFamily = family; bestSize = size; }
+        ctx.restore();
+        const widthScore = Math.abs(Math.log(measured / targetW));
+        const score = widthScore * 0.62 + densityScore * 0.38;
+        if (score < bestScore) {
+          bestScore = score;
+          bestFamily = family;
+          bestWeight = weight;
+          bestSize = size;
+        }
+      }
     }
+
     ctx.save();
-    ctx.font = `${bold ? '700 ' : '400 '}${bestSize}px ${bestFamily}`;
+    ctx.font = `${bestWeight} ${bestSize}px ${bestFamily}`;
     const measured = Math.max(1, ctx.measureText(sampleText).width);
     ctx.restore();
-    // Preserve the original glyph width with only a small tracking adjustment.
-    bestSpacing = Math.max(-0.35, Math.min(1.5, (targetW - measured) / Math.max(1, sampleText.length - 1)));
+    bestSpacing = Math.max(-0.25, Math.min(0.8, (targetW - measured) / Math.max(1, sampleText.length - 1)));
   }
   return {
     fontSize: Math.round(bestSize),
     fontFamily: bestFamily,
-    bold,
+    bold: bestWeight >= 700,
     italic: false,
     letterSpacing: bestSpacing,
     sourceInkWidth: inkWidth,
