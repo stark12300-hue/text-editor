@@ -15,23 +15,16 @@ const HOST = '0.0.0.0';
 app.use(express.json({ limit: '60mb' }));
 app.use(express.static(__dirname));
 
-let ocrWorkerPromise = null;
+let ocrWorker = null;
 
-// NOTE: eng.traineddata in this folder is a plain (non-gzipped) file, so gzip must be false.
-// tesseract.js defaults to gzip:true and looks for eng.traineddata.gz, which fails to load
-// -> OCR returned nothing -> editor fell back to blind "Edit text" boxes.
-function getOcrWorker() {
-  if (!ocrWorkerPromise) {
-    ocrWorkerPromise = Tesseract.createWorker('eng', 1, {
+async function getOcrWorker() {
+  if (!ocrWorker) {
+    ocrWorker = await Tesseract.createWorker('eng', 1, {
       langPath: __dirname,
       cachePath: __dirname,
-      gzip: false,
-    }).catch(err => {
-      ocrWorkerPromise = null; // allow a retry on the next request
-      throw err;
     });
   }
-  return ocrWorkerPromise;
+  return ocrWorker;
 }
 
 // Pre-warm the Tesseract OCR engine on server startup for instantaneous responses
@@ -57,42 +50,39 @@ if (process.env.GEMINI_API_KEY) {
   }
 }
 
-// Image Preprocessing: flatten alpha, upscale small text, grayscale + normalize,
-// invert dark backgrounds (Tesseract expects dark text on light bg), light sharpen.
+// Image Preprocessing: Orientation, contrast, noise removal, brightness normalization, and smart scaling
 async function preprocessImageForOcr(imgBuffer, isFallback = false) {
   const meta = await sharp(imgBuffer).metadata();
   const origWidth = meta.width || 1200;
   const origHeight = meta.height || 900;
 
-  // Tesseract works best when text is ~30px tall (about 300 DPI). Screenshots/UI images have
-  // 10-16px text, so upscale anything under ~1600px on its long side (up to 3x).
+  let targetWidth = origWidth;
+  let targetHeight = origHeight;
+
+  // Scale intelligently: upscale small diagram labels (if < 800px) or downscale ultra-large images (> 3200px)
   const maxDim = Math.max(origWidth, origHeight);
-  let scale = 1;
-  if (maxDim < 1600) scale = Math.min(3, 2000 / maxDim);
-  else if (maxDim > 3200) scale = 2600 / maxDim;
+  if (maxDim < 800) {
+    const scale = Math.min(2.0, 1200 / maxDim);
+    targetWidth = Math.round(origWidth * scale);
+    targetHeight = Math.round(origHeight * scale);
+  } else if (maxDim > 3200) {
+    const scale = 2600 / maxDim;
+    targetWidth = Math.round(origWidth * scale);
+    targetHeight = Math.round(origHeight * scale);
+  }
 
-  const targetWidth = Math.max(1, Math.round(origWidth * scale));
-  const targetHeight = Math.max(1, Math.round(origHeight * scale));
-
-  // Detect dark background (light text on dark) so we can invert it
-  let isDark = false;
-  try {
-    const grayStats = await sharp(imgBuffer)
-      .flatten({ background: '#ffffff' })
-      .grayscale()
-      .stats();
-    isDark = grayStats.channels[0].mean < 110;
-  } catch (e) { /* ignore */ }
-
-  let pipeline = sharp(imgBuffer).flatten({ background: '#ffffff' });
+  let pipeline = sharp(imgBuffer).rotate(); // auto-rotate based on EXIF
 
   if (targetWidth !== origWidth || targetHeight !== origHeight) {
     pipeline = pipeline.resize(targetWidth, targetHeight, { kernel: 'lanczos3' });
   }
 
-  pipeline = pipeline.grayscale().normalize();
-  if (isDark) pipeline = pipeline.negate();
-  pipeline = pipeline.sharpen({ sigma: isFallback ? 1.2 : 0.8 });
+  if (isFallback) {
+    // Fallback pass: high-contrast grayscale normalization for faint/low-contrast diagrams
+    pipeline = pipeline
+      .grayscale()
+      .normalize();
+  }
 
   const processedBuffer = await pipeline.png().toBuffer();
   const scaleX = origWidth / targetWidth;
@@ -263,8 +253,7 @@ function clusterWordsIntoBlocks(words, scaleX, scaleY, origWidth, origHeight) {
 async function runTesseractOcrPipeline(imgBuffer, isFallback = false) {
   const { processedBuffer, scaleX, scaleY, origWidth, origHeight } = await preprocessImageForOcr(imgBuffer, isFallback);
   const worker = await getOcrWorker();
-  // Primary pass: auto page segmentation (3). Fallback pass: sparse text (11) finds scattered labels.
-  await worker.setParameters({ tessedit_pageseg_mode: isFallback ? '11' : '3' });
+  await worker.setParameters({ tessedit_pageseg_mode: '3' });
   const ocrResult = await worker.recognize(processedBuffer, {}, { blocks: true });
 
   const rawBlocks = [];
@@ -381,7 +370,7 @@ async function tryGeminiOcr(imgBuffer) {
 
     // Call Gemini with a 10s timeout promise
     const geminiPromise = geminiAi.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+      model: 'gemini-3.8-flash',
       contents: {
         parts: [
           {
