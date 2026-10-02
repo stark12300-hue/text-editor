@@ -467,9 +467,7 @@ function estimateImageTextStyle(ctx, x, y, width, height, bgColor, sampleText = 
     italic: false,
     letterSpacing: bestSpacing,
     sourceInkWidth: inkWidth,
-    sourceInkHeight: inkHeight,
-    sourceInkX: inkMinX === safeW ? 0 : inkMinX,
-    sourceInkY: inkMinY === safeH ? 0 : inkMinY
+    sourceInkHeight: inkHeight
   };
 }
 
@@ -562,11 +560,7 @@ async function loadImageFile(file) {
         pageNum: 1,
         isEdited: false,
         isAdded: false,
-        confidence: item.confidence,
-        sourceInkWidth: visualStyle.sourceInkWidth,
-        sourceInkHeight: visualStyle.sourceInkHeight,
-        sourceInkX: visualStyle.sourceInkX,
-        sourceInkY: visualStyle.sourceInkY
+        confidence: item.confidence
       });
     });
   }
@@ -673,7 +667,6 @@ async function loadImageFile(file) {
     pageNumber: 1,
     thumbDataUrl: originalDataUrl,
     dataUrl: originalDataUrl, // Pristine, uncompressed original image
-    originalDataUrl, // Pristine source retained for pixel-exact style matching
     width: canvas.width,
     height: canvas.height,
     ptWidth: Math.round(canvas.width * 0.75),
@@ -1685,62 +1678,6 @@ function renderPagesList() {
 }
 
 // Stage Rendering: Clean background image with perfectly non-overlapping text overlays
-function buildRasterStyleReplacement(page, item) {
-  if (state.mode !== 'image' || !page?.originalDataUrl || !item?.originalText || !item?.text) return null;
-
-  const original = item.originalText.trim();
-  const replacement = item.text.trim();
-  if (!original || !replacement || replacement === original) return null;
-  // Pixel-exact fallback for prefix edits such as "Google" -> "Goog".
-  if (!original.startsWith(replacement) || replacement.length < 2) return null;
-
-  try {
-    const source = new Image();
-    source.src = page.originalDataUrl;
-    if (!source.complete || !source.naturalWidth) return null;
-
-    const sourceCanvas = document.createElement('canvas');
-    sourceCanvas.width = source.naturalWidth;
-    sourceCanvas.height = source.naturalHeight;
-    const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
-    sourceCtx.drawImage(source, 0, 0);
-
-    const sx = Math.max(0, Math.min(source.naturalWidth - 1, Math.round(item.x + (item.sourceInkX || 0))));
-    const sy = Math.max(0, Math.min(source.naturalHeight - 1, Math.round(item.y + (item.sourceInkY || 0))));
-    const inkW = Math.max(1, Math.min(source.naturalWidth - sx, Math.round(item.sourceInkWidth || item.width)));
-    const inkH = Math.max(1, Math.min(source.naturalHeight - sy, Math.round(item.sourceInkHeight || item.height)));
-
-    const measureCanvas = document.createElement('canvas');
-    const measureCtx = measureCanvas.getContext('2d');
-    measureCtx.font = String(item.bold ? '700 ' : '400 ') + String(item.fontSize) + 'px ' + String(item.fontFamily || 'Arial, sans-serif');
-    const originalMeasured = Math.max(1, measureCtx.measureText(original).width);
-    const replacementMeasured = Math.max(1, measureCtx.measureText(replacement).width);
-    const widthRatio = Math.max(0.05, Math.min(1, replacementMeasured / originalMeasured));
-    const cropW = Math.max(1, Math.min(inkW, Math.round(inkW * widthRatio)));
-
-    const out = document.createElement('canvas');
-    out.width = cropW;
-    out.height = inkH;
-    const outCtx = out.getContext('2d', { willReadFrequently: true });
-    outCtx.drawImage(sourceCanvas, sx, sy, cropW, inkH, 0, 0, cropW, inkH);
-
-    const pixels = outCtx.getImageData(0, 0, out.width, out.height);
-    const d = pixels.data;
-    const bg = hexToRgb(item.bgColor || '#ffffff');
-    const br = bg.r * 255, bgc = bg.g * 255, bb = bg.b * 255;
-    for (let i = 0; i < d.length; i += 4) {
-      const diff = Math.abs(d[i] - br) + Math.abs(d[i + 1] - bgc) + Math.abs(d[i + 2] - bb);
-      if (diff <= 18) d[i + 3] = 0;
-      else d[i + 3] = Math.max(0, Math.min(255, Math.round((diff - 18) * 2.2)));
-    }
-    outCtx.putImageData(pixels, 0, 0);
-
-    return { dataUrl: out.toDataURL('image/png'), width: cropW, height: inkH, x: sx, y: sy };
-  } catch (err) {
-    console.warn('Raster style-match fallback:', err);
-    return null;
-  }
-}
 function getImageReplacementScaleY(item) {
   if (state.mode !== 'image' || !item?.sourceInkHeight || !item.text) return 1;
   try {
@@ -1835,9 +1772,6 @@ function renderStage() {
   current.items.forEach(t => {
     const isEdited = (t.isEdited && t.text !== t.originalText) || t.isAdded;
 
-    const rasterMatch = (state.mode === 'image' && isEdited && !state.isEditingInline && t.rasterMatchDataUrl)
-      ? { dataUrl: t.rasterMatchDataUrl, width: t.rasterMatchWidth, height: t.rasterMatchHeight, x: t.rasterMatchX, y: t.rasterMatchY }
-      : null;
     // Solid opaque background mask over original text area if edited
     if (isEdited) {
       const mask = document.createElement('div');
@@ -1880,30 +1814,12 @@ function renderStage() {
       el.style.transform = 'none';
     }
 
-    if (rasterMatch) {
-      el.style.color = 'transparent';
-      el.style.backgroundColor = 'transparent';
-    } else if (state.mode === 'image' && !isEdited) {
+    if (state.mode === 'image' && !isEdited) {
       el.style.color = 'transparent';
       el.style.backgroundColor = 'transparent';
     } else {
       el.style.color = t.color || '#000000';
       el.style.backgroundColor = isEdited ? (t.bgColor || '#ffffff') : 'transparent';
-    }
-    if (rasterMatch) {
-      const rasterImg = document.createElement('img');
-      rasterImg.className = 'raster-style-match';
-      rasterImg.src = rasterMatch.dataUrl;
-      rasterImg.alt = '';
-      rasterImg.setAttribute('aria-hidden', 'true');
-      rasterImg.style.position = 'absolute';
-      rasterImg.style.left = (rasterMatch.x * coordRatio) + 'px';
-      rasterImg.style.top = (rasterMatch.y * coordRatio) + 'px';
-      rasterImg.style.width = (rasterMatch.width * coordRatio) + 'px';
-      rasterImg.style.height = (rasterMatch.height * coordRatio) + 'px';
-      rasterImg.style.pointerEvents = 'none';
-      rasterImg.style.zIndex = '9';
-      stageWrapper.appendChild(rasterImg);
     }
     el.style.zIndex = '10';
 
@@ -2208,24 +2124,8 @@ function activateDirectEditing(el, item) {
     if (item.text !== item.originalText) {
       item.isEdited = true;
 
-      // Preserve the original raster glyphs for prefix edits before erasing them.
-      const current = getCurrentPage();
-      const rasterMatch = current ? buildRasterStyleReplacement(current, item) : null;
-      if (rasterMatch) {
-        item.rasterMatchDataUrl = rasterMatch.dataUrl;
-        item.rasterMatchWidth = rasterMatch.width;
-        item.rasterMatchHeight = rasterMatch.height;
-        item.rasterMatchX = rasterMatch.x;
-        item.rasterMatchY = rasterMatch.y;
-      } else {
-        delete item.rasterMatchDataUrl;
-        delete item.rasterMatchWidth;
-        delete item.rasterMatchHeight;
-        delete item.rasterMatchX;
-        delete item.rasterMatchY;
-      }
-
       // Solidly erase original ink from canvas image so zero ghosting remains
+      const current = getCurrentPage();
       if (current) {
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = current.width;
@@ -2556,17 +2456,10 @@ $('exportImageBtn').onclick = async () => {
           const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
           ctx.fillRect(Math.max(0, t.x - 2), Math.max(0, t.y - 2), origW + 4, t.height + 4);
         }
-        if (t.rasterMatchDataUrl && t.rasterMatchWidth && t.rasterMatchHeight) {
-          const rasterImg = new Image();
-          rasterImg.src = t.rasterMatchDataUrl;
-          if (rasterImg.complete) ctx.drawImage(rasterImg, t.rasterMatchX, t.rasterMatchY, t.rasterMatchWidth, t.rasterMatchHeight);
-          else rasterImg.onload = () => ctx.drawImage(rasterImg, t.rasterMatchX, t.rasterMatchY, t.rasterMatchWidth, t.rasterMatchHeight);
-        } else {
-          ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
-          ctx.fillStyle = t.color || '#000000';
-          ctx.textBaseline = 'top';
-          ctx.fillText(t.text, t.x, t.y);
-        }
+        ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
+        ctx.fillStyle = t.color || '#000000';
+        ctx.textBaseline = 'top';
+        ctx.fillText(t.text, t.x, t.y);
         ctx.restore();
       }
     });
@@ -2792,17 +2685,10 @@ $('exportPdfBtn').onclick = async () => {
               const origW = Math.max(t.width, (t.originalText || '').length * t.fontSize * 0.68);
               ctx.fillRect(Math.max(0, t.x - 2), Math.max(0, t.y - 2), origW + 4, t.height + 4);
             }
-            if (t.rasterMatchDataUrl && t.rasterMatchWidth && t.rasterMatchHeight) {
-              const rasterImg = new Image();
-              rasterImg.src = t.rasterMatchDataUrl;
-              await new Promise(resolve => rasterImg.complete ? resolve() : (rasterImg.onload = resolve));
-              ctx.drawImage(rasterImg, t.rasterMatchX, t.rasterMatchY, t.rasterMatchWidth, t.rasterMatchHeight);
-            } else {
-              ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
-              ctx.fillStyle = t.color || '#000000';
-              ctx.textBaseline = 'top';
-              ctx.fillText(t.text, t.x, t.y);
-            }
+            ctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? 'bold ' : ''}${t.fontSize}px ${t.fontFamily || 'Arial, sans-serif'}`;
+            ctx.fillStyle = t.color || '#000000';
+            ctx.textBaseline = 'top';
+            ctx.fillText(t.text, t.x, t.y);
             ctx.restore();
           }
         });
