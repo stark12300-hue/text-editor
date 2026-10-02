@@ -13,6 +13,23 @@ const PORT = 3000;
 const HOST = '0.0.0.0';
 
 app.use(express.json({ limit: '60mb' }));
+
+// Serve crawler files before the generic static middleware so they cannot
+// be replaced by the SPA/static fallback response.
+app.get('/robots.txt', (req, res) => {
+  res.status(200);
+  res.set('Content-Type', 'text/plain; charset=utf-8');
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.sendFile('robots.txt', { root: __dirname });
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  res.status(200);
+  res.set('Content-Type', 'application/xml; charset=utf-8');
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.sendFile('sitemap.xml', { root: __dirname });
+});
+
 app.use(express.static(__dirname));
 
 let ocrWorker = null;
@@ -487,16 +504,6 @@ app.post('/api/extract-text', async (req, res) => {
     console.error('OCR Extraction error:', err);
     res.status(500).json({ error: err.message || 'OCR failed', items: [] });
   }
-});
-
-app.get('/robots.txt', (req, res) => {
-  res.type('text/plain');
-  res.sendFile('robots.txt', { root: __dirname });
-});
-
-app.get('/sitemap.xml', (req, res) => {
-  res.type('application/xml');
-  res.sendFile('sitemap.xml', { root: __dirname });
 });
 
 app.get(['/logo.svg', '/favicon.ico'], (req, res) => {
